@@ -12,7 +12,7 @@ from PIL import Image
 
 IM_WIDTH = 200
 IM_HEIGHT = 200
-SAMPLE_NUM = 50
+SAMPLE_NUM = 5
 p_RR = 0.7
 num_threads = 10
 
@@ -114,9 +114,9 @@ def sampleNextDir(normDir, isSpecular, shininess):
 
     phi = 2. * np.pi * np.random.uniform()
     if not isSpecular:
-        theta = np.acos(np.random.uniform() ** .5)
+        theta = np.arccos(np.random.uniform() ** .5)
     else:
-        theta = np.acos(np.random.uniform() ** (1./(shininess+1)))
+        theta = np.arccos(np.random.uniform() ** (1./(shininess+1)))
 
     hemiDir = np.array([
         np.sin(theta)*np.cos(phi),
@@ -126,10 +126,10 @@ def sampleNextDir(normDir, isSpecular, shininess):
     normDir0 = np.array([0,0,1])
 
     angle_axis = np.cross(normDir0,normDir)
-    R = Rotation.from_rotvec(angle_axis)
+    R = Rotation.from_rotvec(angle_axis).as_matrix()
 
     dir = R @ hemiDir
-    dir /= np.linalg.norm(q)
+    dir /= np.linalg.norm(dir)
 
     if not isSpecular:
         pdf = 1 / np.pi
@@ -158,20 +158,18 @@ def radiance(ray, scene, recursion):
     # Direct lighting
     L_d = directLighting(intersection, ray.d, scene)
 
-    """
     # Next lighting
     L_i = np.zeros(3)
     isSpecular = (mat.specular > 0).any()
-    sample = sampleNextDir(tri.normal,isSpeuclar,mat.shininess)
+    sample = sampleNextDir(tri.normal,isSpecular,mat.glossiness)
 
     next_ray = Ray(intersection.hit,sample['dir'])
     if np.random.uniform() < p_RR:
         L_i += radiance(next_ray, scene, recursion + 1)
-    coeff = BSDF(tri,intersection,ray.d,sample['dir'],False) * np.dot(sample['dir'],tri.normal) / sample['pdf'] / p_RR
+    coeff = BSDF(intersection,ray.d,sample['dir'],False) * np.dot(sample['dir'],tri.normal) / sample['pdf'] / p_RR
     L_i *= coeff
-    """
 
-    return L_e + L_d
+    return L_e + L_d + L_i
 
 def trace_ray(ray, scene):
 
