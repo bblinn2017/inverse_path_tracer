@@ -107,10 +107,10 @@ class Mesh:
             f = faces[i]
             v = vertices[f]
 
-            if -1 in mat_params:
-                data = mat_params
-            else:
+            if i in mat_params:
                 data = mat_params[i]
+            else:
+                data = mat_params[-1]
 
             mat = Material(data)
 
@@ -174,5 +174,5 @@ class Object:
         int_t = t[sub_idx]
         int_point = point[sub_idx]
         int_tri = self.mesh.triangles[idx[sub_idx]]
-        
+
         return int_t,int_point,int_tri
