@@ -12,7 +12,7 @@ from PIL import Image
 
 IM_WIDTH = 200
 IM_HEIGHT = 200
-SAMPLE_NUM = 5
+SAMPLE_NUM = 1
 p_RR = 0.7
 num_threads = 10
 
@@ -126,6 +126,14 @@ def sampleNextDir(normDir, isSpecular, shininess):
     normDir0 = np.array([0,0,1])
 
     angle_axis = np.cross(normDir0,normDir)
+    if (angle_axis == 0.).all():
+        radians = np.arccos(np.dot(normDir0,normDir))
+
+        v2 = np.cross(normDir0,np.array([0,0,1]))
+        v2 = v2 if np.linalg.norm(v2) != 0 else np.cross(normDir0,np.array([1,0,0]))
+        v2 = v2 / np.linalg.norm(v2)
+        angle_axis = v2 * radians
+
     R = Rotation.from_rotvec(angle_axis).as_matrix()
 
     dir = R @ hemiDir
@@ -162,7 +170,6 @@ def radiance(ray, scene, recursion):
     L_i = np.zeros(3)
     isSpecular = (mat.specular > 0).any()
     sample = sampleNextDir(tri.normal,isSpecular,mat.glossiness)
-
     next_ray = Ray(intersection.hit,sample['dir'])
     if np.random.uniform() < p_RR:
         L_i += radiance(next_ray, scene, recursion + 1)
