@@ -2,3 +2,5 @@ PyMesh
 *~
 __pycache__
 .DS_Store
+eigen*
+include/

@@ -1,0 +1,4 @@
+/users/bblinn/pt_inv/build/CMakeFiles/rebuild_cache.dir
+/users/bblinn/pt_inv/build/CMakeFiles/edit_cache.dir
+/users/bblinn/pt_inv/build/CMakeFiles/path_trace.dir
+/users/bblinn/pt_inv/build/CMakeFiles/path_trace.so.dir
