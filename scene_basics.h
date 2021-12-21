@@ -129,7 +129,7 @@ class Mesh {
                       m_vertices[face[2]]};
       m_triangles[i] = Triangle(i,m_material,tri_v);
     }
-    m_nT = fs.size(); 
+    m_nT = fs.size();
   }
 
   ~Mesh() {
@@ -380,7 +380,6 @@ class Object {
       mat.SetParameter(matParam_t::Shininess,&shininess);
       mat.SetParameter(matParam_t::IOR,&ior);
     }  
-    
     // Create Mesh
     cudaMallocManaged(&m_mesh,sizeof(Mesh));
     *m_mesh = Mesh(pos,mat,vertices,faces);
