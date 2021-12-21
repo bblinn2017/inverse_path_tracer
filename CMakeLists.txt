@@ -11,9 +11,9 @@ INCLUDE_DIRECTORIES ( "${EIGEN3_INCLUDE_DIR}" )
 add_compile_options(-w)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-add_library(${PROJECT_NAME}.so SHARED
-			  path_trace.cu)
+#add_library(${PROJECT_NAME}.so SHARED
+#			  path_trace.cu)
 add_executable(${PROJECT_NAME} path_trace.cu)
 
-set_property(TARGET ${PROJECT_NAME}.so PROPERTY CUDA_STANDARD 11)
+#set_property(TARGET ${PROJECT_NAME}.so PROPERTY CUDA_STANDARD 11)
 set_property(TARGET ${PROJECT_NAME} PROPERTY CUDA_STANDARD 11)

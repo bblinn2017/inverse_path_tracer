@@ -5,3 +5,4 @@ __pycache__
 eigen*
 include/
 build/
+stb*
