@@ -758,7 +758,7 @@ bool LoadObj(attrib_t *attrib, std::vector<shape_t> *shapes,
 
        std::vector<std::string> filenames;
        SplitString(std::string(token), ' ', '\\', filenames);
-
+       
        if (filenames.empty()) {
 	 if (warn) {
 	   std::stringstream ss;
@@ -798,7 +798,6 @@ bool LoadObj(attrib_t *attrib, std::vector<shape_t> *shapes,
 	 }
        }
      }
-
      continue;
    }
  

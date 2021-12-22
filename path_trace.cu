@@ -14,8 +14,8 @@ const vecF LOOK = vecF(0.,0.,1.);
 const vecF UP = vecF(0.,1.,0.);
 const float HA = 90.f;
 const float AR = 1.f;
-#define IM_WIDTH 100
-#define IM_HEIGHT 100
+#define IM_WIDTH 500
+#define IM_HEIGHT 500
 #define SAMPLE_NUM 1
 #define p_RR 0.7f
 #define BLOCKSIZE 512
@@ -24,7 +24,8 @@ const float AR = 1.f;
 __host__ __device__ vecF directLighting(Scene *scene, vecF d, intersection_t intersect) {
     
     Triangle *t_curr = intersect.tri;
-
+    Triangle **emissives; int n_e;
+    scene->emissives(emissives,n_e);
 }
 
 __host__ __device__ vecF radiance(Scene *scene, Ray ray, int recursion) {
@@ -34,12 +35,13 @@ __host__ __device__ vecF radiance(Scene *scene, Ray ray, int recursion) {
     if (!intersect.hit) {return vecF(0,0,0);}
 
     Triangle *tri = intersect.tri;
-    mat_t mat = tri->material;
+    material_t *mat = tri->material;
+    return vecF(mat->diffuse[0],mat->diffuse[1],mat->diffuse[2]);
 
     // Emission
     vecF L_e;
     if (recursion == 0) {
-       for (int i = 0; i < 3; i++) {L_e[i] = mat.emissive[i];}
+       for (int i = 0; i < 3; i++) {L_e[i] = mat->emission[i];}
     }
 
     // Direct
@@ -74,14 +76,11 @@ int main(int argc, char argv[]) {
     Object *objects;
     int n = 2;
     cudaMallocManaged(&objects,sizeof(Object)*n);
-    objects[0] = Object(shape_type_t::Other,
-			vecF(0,0,1.),
-			vecF(0,0,0),
-			vecF(4,4,4),
-			"/users/bblinn/pt_inv/shapes/scene.obj");
-    for (int i = 1; i < n; i++) {
-	objects[i] = Object(shape_type_t::Cube);
-    }
+    new(&(objects[0])) Object(shape_type_t::Cornell,
+				vecF(0,0,2.),
+                  		vecF(0,0,0),
+                  		vecF(2,2,2));
+    new(&(objects[1])) Object(shape_type_t::Cube);
     
     Camera *camera;
     cudaMallocManaged(&camera,sizeof(Camera));
@@ -90,11 +89,11 @@ int main(int argc, char argv[]) {
     vecF up = vecF(0,1,0);
     float heightAngle = 90.f;
     float aspectRatio = 1.f;
-    camera = new(camera) Camera(eye,look,up,heightAngle,aspectRatio);
+    new(camera) Camera(eye,look,up,heightAngle,aspectRatio);
     
     Scene *scene;
     cudaMallocManaged(&scene,sizeof(Scene));
-    scene = new(scene) Scene(camera,objects,n);
+    new(scene) Scene(camera,objects,n);
     
     vecF *gpuValues;
     cudaMallocManaged(&gpuValues,sizeof(vecF)*IM_WIDTH*IM_HEIGHT*SAMPLE_NUM);
@@ -117,8 +116,6 @@ int main(int argc, char argv[]) {
 
     cudaFree(gpuValues);
     cudaFree(objects);
-    //delete camera;
     cudaFree(camera);
-    //delete scene;
     cudaFree(scene);
 }

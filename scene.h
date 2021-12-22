@@ -54,12 +54,25 @@ class Scene {
     m_camera = camera;
     m_objects = objects;
     m_n = n;
+
+    std::vector<Triangle *> emissives;
+    for (int i = 0; i < n; i++) {
+      Object o = m_objects[i];
+      Triangle **o_emissives = o.getEmissives();
+      for (int j = 0; j < o.nEmissives(); j++) {
+	emissives.push_back(o_emissives[j]);
+      }
+    }
+    cudaMalloc(&m_emissives,sizeof(Triangle *)*emissives.size());
+    cudaMemcpy(m_emissives,emissives.data(),sizeof(Triangle *)*emissives.size(),cudaMemcpyHostToDevice);
+    m_e = emissives.size();
     
     cudaMallocManaged(&m_bvh,sizeof(BVH));
     *m_bvh = BVH(objects,n);
   }
   
   __host__ __device__ ~Scene() {
+    cudaFree(m_emissives);
   }
 
   __host__ __device__ void getIntersection(Ray ray, intersection_t &intersect, bool occlusion=false) {
@@ -69,9 +82,15 @@ class Scene {
   __host__ __device__ mat4F getInverseViewMatrix() {
     return m_camera->getInverseViewMatrix();
   }
-  
+
+  __host__ __device__ void emissives(Triangle ** &emissives, int &e) {
+    emissives = m_emissives;
+    e = m_e;
+  }
+ 
  private:
-  Triangle *m_emissives;
+  Triangle **m_emissives;
+  int m_e;
   Camera *m_camera;
   Object *m_objects;
   int m_n;
