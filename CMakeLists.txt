@@ -11,8 +11,6 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 #add_library(${PROJECT_NAME}.so SHARED
 #			  path_trace.cu)
 add_executable(${PROJECT_NAME} path_trace.cu)
-add_executable(temp temp.cu)
 
 #set_property(TARGET ${PROJECT_NAME}.so PROPERTY CUDA_STANDARD 11)
 set_property(TARGET ${PROJECT_NAME} PROPERTY CUDA_STANDARD 11)
-set_property(TARGET temp PROPERTY CUDA_STANDARD 11)

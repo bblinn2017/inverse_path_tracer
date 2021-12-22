@@ -7,7 +7,8 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <Eigen/Geometry>
-#include <Eigen/Dense> 
+#include <Eigen/Dense>
+#include "tiny_obj_loader.h" 
 
 #define MIN_DOT 1e-4
 
@@ -22,7 +23,7 @@ typedef Eigen::Vector3i vecI;
 typedef Eigen::Matrix4f mat4F;
 typedef Eigen::Matrix3f mat3F;
 
-enum shape_t {Cube=0,Sphere=1,Other=2};
+enum shape_type_t {Cube=0,Sphere=1,Other=2};
 enum matParam_t {Ambient=0,Diffuse=1,Specular=2,Shininess=3,IOR=4,Emissive=5};
 
 struct mat_t {
@@ -265,7 +266,7 @@ __host__ __device__ struct bbox_t {
 
 class Object {
  public:
-  __host__ Object(shape_t shp,
+  __host__ Object(shape_type_t shp,
 	 vecF pos=vecF(0.,0.,2.5),
 	 vecF ori=vecF(0.,0.,0.),
 	 vecF scl=vecF(1.,1.,1.),
@@ -426,11 +427,6 @@ class Object {
       intersection.hit = has_int;
       intersection.tri = tri;
     }
-  }
-  
-  __host__ __device__ void getEmissives(Triangle **ptr_emissives, int &nE) {
-    ptr_emissives = &(m_mesh->m_emissives);
-    nE = m_mesh->nE;
   }
 
  private:

@@ -23,7 +23,7 @@ const float AR = 1.f;
 
 __host__ __device__ vecF directLighting(Scene *scene, vecF d, intersection_t intersect) {
     
-    Triangle *t_curr = intersection.tri;
+    Triangle *t_curr = intersect.tri;
 
 }
 
@@ -31,15 +31,15 @@ __host__ __device__ vecF radiance(Scene *scene, Ray ray, int recursion) {
     intersection_t intersect;
     scene->getIntersection(ray,intersect);
     
-    if (!intersection.hit) {return vecF(0,0,0);}
+    if (!intersect.hit) {return vecF(0,0,0);}
 
-    Triange *tri = intersection.tri;
+    Triangle *tri = intersect.tri;
     mat_t mat = tri->material;
 
     // Emission
     vecF L_e;
     if (recursion == 0) {
-       for (int i = 0; i < 3; i++) {L_e[i] = mat.emission[i];}
+       for (int i = 0; i < 3; i++) {L_e[i] = mat.emissive[i];}
     }
 
     // Direct
@@ -74,13 +74,13 @@ int main(int argc, char argv[]) {
     Object *objects;
     int n = 2;
     cudaMallocManaged(&objects,sizeof(Object)*n);
-    objects[0] = Object(shape_t::Other,
+    objects[0] = Object(shape_type_t::Other,
 			vecF(0,0,1.),
 			vecF(0,0,0),
 			vecF(4,4,4),
 			"/users/bblinn/pt_inv/shapes/scene.obj");
     for (int i = 1; i < n; i++) {
-	objects[i] = Object(shape_t::Cube);
+	objects[i] = Object(shape_type_t::Cube);
     }
     
     Camera *camera;

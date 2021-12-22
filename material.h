@@ -1,11 +1,4 @@
-
-#ifdef TINYOBJLOADER_USE_DOUBLE
-//#pragma message "using double"
-typedef double real_t;
-#else
-//#pragma message "using float"
-typedef float real_t;
-#endif
+#include "utils.h"
 
 typedef enum {
   TEXTURE_TYPE_NONE,  // default
@@ -183,32 +176,211 @@ struct material_t {
   #endif
   };
 
- class MaterialReader {
- public:
-   MaterialReader() {}
-   virtual ~MaterialReader();
+static inline texture_type_t parseTextureType(
+					      const char **token, texture_type_t default_value = TEXTURE_TYPE_NONE) {
+  (*token) += strspn((*token), " \t");
+  const char *end = (*token) + strcspn((*token), " \t\r");
+  texture_type_t ty = default_value;
 
-   virtual bool operator()(const std::string &matId,
-			   std::vector<material_t> *materials,
-			   std::map<std::string, int> *matMap, std::string *warn,
-			   std::string *err) = 0;
- };
+  if ((0 == strncmp((*token), "cube_top", strlen("cube_top")))) {
+    ty = TEXTURE_TYPE_CUBE_TOP;
+  } else if ((0 == strncmp((*token), "cube_bottom", strlen("cube_bottom")))) {
+    ty = TEXTURE_TYPE_CUBE_BOTTOM;
+  } else if ((0 == strncmp((*token), "cube_left", strlen("cube_left")))) {
+    ty = TEXTURE_TYPE_CUBE_LEFT;
+  } else if ((0 == strncmp((*token), "cube_right", strlen("cube_right")))) {
+    ty = TEXTURE_TYPE_CUBE_RIGHT;
+  } else if ((0 == strncmp((*token), "cube_front", strlen("cube_front")))) {
+    ty = TEXTURE_TYPE_CUBE_FRONT;
+  } else if ((0 == strncmp((*token), "cube_back", strlen("cube_back")))) {
+    ty = TEXTURE_TYPE_CUBE_BACK;
+  } else if ((0 == strncmp((*token), "sphere", strlen("sphere")))) {
+    ty = TEXTURE_TYPE_SPHERE;
+  }
 
- class MaterialStreamReader : public MaterialReader {
- public:
-   explicit MaterialStreamReader(std::istream &inStream)
-     : m_inStream(inStream) {}
-   virtual ~MaterialStreamReader() TINYOBJ_OVERRIDE {}
-   virtual bool operator()(const std::string &matId,
-			   std::vector<material_t> *materials,
-			   std::map<std::string, int> *matMap, std::string *warn,
-			   std::string *err) TINYOBJ_OVERRIDE;
+  (*token) = end;
+  return ty;
+}
 
- private:
-   std::istream &m_inStream;
- };
+bool ParseTextureNameAndOption(std::string *texname, texture_option_t *texopt,
+                               const char *linebuf) {
+  // @todo { write more robust lexer and parser. }
+  bool found_texname = false;
+  std::string texture_name;
 
- void LoadMtl(std::map<std::string, int> *material_map,
+  const char *token = linebuf;  // Assume line ends with NULL
+
+  while (!IS_NEW_LINE((*token))) {
+    token += strspn(token, " \t");  // skip space
+    if ((0 == strncmp(token, "-blendu", 7)) && IS_SPACE((token[7]))) {
+      token += 8;
+      texopt->blendu = parseOnOff(&token, /* default */ true);
+    } else if ((0 == strncmp(token, "-blendv", 7)) && IS_SPACE((token[7]))) {
+      token += 8;
+      texopt->blendv = parseOnOff(&token, /* default */ true);
+    } else if ((0 == strncmp(token, "-clamp", 6)) && IS_SPACE((token[6]))) {
+      token += 7;
+      texopt->clamp = parseOnOff(&token, /* default */ true);
+    } else if ((0 == strncmp(token, "-boost", 6)) && IS_SPACE((token[6]))) {
+      token += 7;
+      texopt->sharpness = parseReal(&token, 1.0);
+    } else if ((0 == strncmp(token, "-bm", 3)) && IS_SPACE((token[3]))) {
+      token += 4;
+      texopt->bump_multiplier = parseReal(&token, 1.0);
+    } else if ((0 == strncmp(token, "-o", 2)) && IS_SPACE((token[2]))) {
+      token += 3;
+      parseReal3(&(texopt->origin_offset[0]), &(texopt->origin_offset[1]),
+                 &(texopt->origin_offset[2]), &token);
+    } else if ((0 == strncmp(token, "-s", 2)) && IS_SPACE((token[2]))) {
+      token += 3;
+      parseReal3(&(texopt->scale[0]), &(texopt->scale[1]), &(texopt->scale[2]),
+                 &token, 1.0, 1.0, 1.0);
+    } else if ((0 == strncmp(token, "-t", 2)) && IS_SPACE((token[2]))) {
+      token += 3;
+      parseReal3(&(texopt->turbulence[0]), &(texopt->turbulence[1]),
+                 &(texopt->turbulence[2]), &token);
+    } else if ((0 == strncmp(token, "-type", 5)) && IS_SPACE((token[5]))) {
+      token += 5;
+      texopt->type = parseTextureType((&token), TEXTURE_TYPE_NONE);
+    } else if ((0 == strncmp(token, "-texres", 7)) && IS_SPACE((token[7]))) {
+      token += 7;
+      // TODO(syoyo): Check if arg is int type.
+      texopt->texture_resolution = parseInt(&token);
+    } else if ((0 == strncmp(token, "-imfchan", 8)) && IS_SPACE((token[8]))) {
+      token += 9;
+      token += strspn(token, " \t");
+      const char *end = token + strcspn(token, " \t\r");
+      if ((end - token) == 1) {  // Assume one char for -imfchan
+        texopt->imfchan = (*token);
+      }
+      token = end;
+    } else if ((0 == strncmp(token, "-mm", 3)) && IS_SPACE((token[3]))) {
+      token += 4;
+      parseReal2(&(texopt->brightness), &(texopt->contrast), &token, 0.0, 1.0);
+    } else if ((0 == strncmp(token, "-colorspace", 11)) &&
+               IS_SPACE((token[11]))) {
+      token += 12;
+      texopt->colorspace = parseString(&token);
+    } else {
+      // Assume texture filename
+#if 0
+      size_t len = strcspn(token, " \t\r");  // untile next space
+      texture_name = std::string(token, token + len);
+      token += len;
+
+      token += strspn(token, " \t");  // skip space
+#else
+      // Read filename until line end to parse filename containing whitespace
+      // TODO(syoyo): Support parsing texture option flag after the filename.
+      texture_name = std::string(token);
+      token += texture_name.length();
+#endif
+
+      found_texname = true;
+    }
+  }
+
+  if (found_texname) {
+    (*texname) = texture_name;
+    return true;
+  } else {
+    return false;
+  }
+}
+
+static void InitTexOpt(texture_option_t *texopt, const bool is_bump) {
+  if (is_bump) {
+    texopt->imfchan = 'l';
+  } else {
+    texopt->imfchan = 'm';
+  }
+  texopt->bump_multiplier = static_cast<real_t>(1.0);
+  texopt->clamp = false;
+  texopt->blendu = true;
+  texopt->blendv = true;
+  texopt->sharpness = static_cast<real_t>(1.0);
+  texopt->brightness = static_cast<real_t>(0.0);
+  texopt->contrast = static_cast<real_t>(1.0);
+  texopt->origin_offset[0] = static_cast<real_t>(0.0);
+  texopt->origin_offset[1] = static_cast<real_t>(0.0);
+  texopt->origin_offset[2] = static_cast<real_t>(0.0);
+  texopt->scale[0] = static_cast<real_t>(1.0);
+  texopt->scale[1] = static_cast<real_t>(1.0);
+  texopt->scale[2] = static_cast<real_t>(1.0);
+  texopt->turbulence[0] = static_cast<real_t>(0.0);
+  texopt->turbulence[1] = static_cast<real_t>(0.0);
+  texopt->turbulence[2] = static_cast<real_t>(0.0);
+  texopt->texture_resolution = -1;
+  texopt->type = TEXTURE_TYPE_NONE;
+}
+
+static void InitMaterial(material_t *material) {
+  InitTexOpt(&material->ambient_texopt, /* is_bump */ false);
+  InitTexOpt(&material->diffuse_texopt, /* is_bump */ false);
+  InitTexOpt(&material->specular_texopt, /* is_bump */ false);
+  InitTexOpt(&material->specular_highlight_texopt, /* is_bump */ false);
+  InitTexOpt(&material->bump_texopt, /* is_bump */ true);
+  InitTexOpt(&material->displacement_texopt, /* is_bump */ false);
+  InitTexOpt(&material->alpha_texopt, /* is_bump */ false);
+  InitTexOpt(&material->reflection_texopt, /* is_bump */ false);
+  InitTexOpt(&material->roughness_texopt, /* is_bump */ false);
+  InitTexOpt(&material->metallic_texopt, /* is_bump */ false);
+  InitTexOpt(&material->sheen_texopt, /* is_bump */ false);
+  InitTexOpt(&material->emissive_texopt, /* is_bump */ false);
+  InitTexOpt(&material->normal_texopt,
+             /* is_bump */ false);  // @fixme { is_bump will be true? }
+  material->name = "";
+  material->ambient_texname = "";
+  material->diffuse_texname = "";
+  material->specular_texname = "";
+  material->specular_highlight_texname = "";
+  material->bump_texname = "";
+  material->displacement_texname = "";
+  material->reflection_texname = "";
+  material->alpha_texname = "";
+  for (int i = 0; i < 3; i++) {
+    material->ambient[i] = static_cast<real_t>(0.0);
+    material->diffuse[i] = static_cast<real_t>(0.0);
+    material->specular[i] = static_cast<real_t>(0.0);
+    material->transmittance[i] = static_cast<real_t>(0.0);
+    material->emission[i] = static_cast<real_t>(0.0);
+  }
+  material->illum = 0;
+  material->dissolve = static_cast<real_t>(1.0);
+  material->shininess = static_cast<real_t>(1.0);
+  material->ior = static_cast<real_t>(1.0);
+
+  material->roughness = static_cast<real_t>(0.0);
+  material->metallic = static_cast<real_t>(0.0);
+  material->sheen = static_cast<real_t>(0.0);
+  material->clearcoat_thickness = static_cast<real_t>(0.0);
+  material->clearcoat_roughness = static_cast<real_t>(0.0);
+  material->anisotropy_rotation = static_cast<real_t>(0.0);
+  material->anisotropy = static_cast<real_t>(0.0);
+  material->roughness_texname = "";
+  material->metallic_texname = "";
+  material->sheen_texname = "";
+  material->emissive_texname = "";
+  material->normal_texname = "";
+
+  material->unknown_parameter.clear();
+}
+
+// code from https://wrf.ecse.rpi.edu//Research/Short_Notes/pnpoly.html
+template <typename T>
+static int pnpoly(int nvert, T *vertx, T *verty, T testx, T testy) {
+  int i, j, c = 0;
+  for (i = 0, j = nvert - 1; i < nvert; j = i++) {
+    if (((verty[i] > testy) != (verty[j] > testy)) &&
+        (testx <
+         (vertx[j] - vertx[i]) * (testy - verty[i]) / (verty[j] - verty[i]) +
+	 vertx[i]))
+      c = !c;
+  }
+  return c;
+}
+
+void LoadMtl(std::map<std::string, int> *material_map,
 	      std::vector<material_t> *materials, std::istream *inStream,
 	      std::string *warning, std::string *err) {
    (void)err;
@@ -599,8 +771,22 @@ struct material_t {
    }
  }
 
+class MaterialReader {
+ public:
+  MaterialReader() {}
 
- bool MaterialStreamReader::operator()(const std::string &matId,
+  virtual bool operator()(const std::string &matId,
+			  std::vector<material_t> *materials,
+			  std::map<std::string, int> *matMap, std::string *warn,
+			  std::string *err) = 0;
+};
+
+class MaterialStreamReader : public MaterialReader {
+ public:
+  explicit MaterialStreamReader(std::istream &inStream)
+    : m_inStream(inStream) {}
+
+  bool operator()(const std::string &matId,
 				       std::vector<material_t> *materials,
 				       std::map<std::string, int> *matMap,
 				       std::string *warn, std::string *err) {
@@ -619,3 +805,8 @@ struct material_t {
 
    return true;
  }
+
+ private:
+ std::istream &m_inStream;
+
+};
