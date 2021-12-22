@@ -11,62 +11,47 @@
 
 mtllib CornellBox-Empty-CO.mtl
 
-# Object floor
-v  -1.01  0.00   0.99
-v   1.00  0.00   0.99
-v   1.00  0.00  -1.04
-v  -0.99  0.00  -1.04
+# Floor
+v -1 -1 -1
+v -1 -1 1
+v 1 -1 -1
+v 1 -1 1
+
+# Ceiling
+v -1 1 -1
+v -1 1 1
+v 1 1 -1
+v 1 1 1
+
+# Light
+v -.5 1 -.5
+v -.5 1 .5
+v .5 1 -.5
+v .5 1 .5
 
 g floor
 usemtl floor
-f -4 -3 -2 -1
-
-# Object ceiling 
-v  -1.02  1.99   0.99  
-v  -1.02  1.99  -1.04
-v   1.00  1.99  -1.04
-v   1.00  1.99   0.99
+f 1 2 3 4
 
 g ceiling
 usemtl ceiling
-f -4 -3 -2 -1
-
-# Object backwall  
-v  -0.99  0.00  -1.04 
-v   1.00  0.00  -1.04
-v   1.00  1.99  -1.04
-v  -1.02  1.99  -1.04
+f 5 6 9 10
+f 5 7 9 11
+f 6 8 10 12
+f 7 8 11 12
 
 g backWall
 usemtl backWall
-f -4 -3 -2 -1
-
-## Object rightwall 
-v	1.00  0.00  -1.04   
-v	1.00  0.00   0.99
-v	1.00  1.99   0.99
-v	1.00  1.99  -1.04
+f 2 4 6 8
 
 g rightWall
 usemtl rightWall
-f -4 -3 -2 -1
-
-## Object leftWall   
-v  -1.01  0.00   0.99
-v  -0.99  0.00  -1.04
-v  -1.02  1.99  -1.04
-v  -1.02  1.99   0.99
+f 3 4 7 8
 
 g leftWall
 usemtl leftWall
-f -4 -3 -2 -1
-
-## Object light 
-v	-0.24  1.98   0.16
-v	-0.24  1.98  -0.22
-v	 0.23  1.98  -0.22
-v	 0.23  1.98   0.16
+f 1 2 5 6
 
 g light
 usemtl light
-f -4 -3 -2 -1
+f 9 10 11 12
