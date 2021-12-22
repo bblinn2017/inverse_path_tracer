@@ -31,27 +31,27 @@ v .5 1 .5
 
 g floor
 usemtl floor
-f 1 2 3 4
+f 1 2 4 3
 
 g ceiling
 usemtl ceiling
-f 5 6 9 10
-f 5 7 9 11
-f 6 8 10 12
-f 7 8 11 12
+f 9 10 6 5
+f 5 7 11 9
+f 10 12 8 6
+f 7 8 12 11
 
 g backWall
 usemtl backWall
-f 2 4 6 8
+f 6 8 4 2
 
 g rightWall
 usemtl rightWall
-f 3 4 7 8
+f 3 4 8 7
 
 g leftWall
 usemtl leftWall
-f 1 2 5 6
+f 5 6 2 1
 
 g light
 usemtl light
-f 9 10 11 12
+f 11 12 10 9
