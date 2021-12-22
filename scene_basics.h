@@ -131,7 +131,6 @@ class Mesh {
     }
     m_nT = fs.size();
   }
-
   ~Mesh() {
     cudaFree(m_vertices);
     cudaFree(m_faces);
@@ -382,7 +381,7 @@ class Object {
     }  
     // Create Mesh
     cudaMallocManaged(&m_mesh,sizeof(Mesh));
-    *m_mesh = Mesh(pos,mat,vertices,faces);
+    m_mesh = new(m_mesh) Mesh(pos,mat,vertices,faces);
   };
 
   __host__ __device__ Object() {}
@@ -403,10 +402,6 @@ class Object {
     Triangle *tri;
     bool has_int;
     
-    for (int i = 0; i < m_mesh->m_nV; i++) {
-      vecF v = m_mesh->m_vertices[i];
-      printf("%f %f %f\n",v[0],v[1],v[2]);
-    }
     for (int i = 0; i < m_mesh->m_nT; i++) {
       tri = &(m_mesh->m_triangles[i]);
 
@@ -417,7 +412,7 @@ class Object {
       if (denom < MIN_DOT) {continue;}
       
       t = (ray.p - center).dot(normal) / denom;
-      if (t < 0 || t > intersection.t) {continue;}
+      if (t < 0 || t >= intersection.t) {continue;}
 
       point = ray.p + ray.d * t;
       has_int = true;
@@ -433,9 +428,13 @@ class Object {
     }
   }
   
-  Mesh *m_mesh;
+  __host__ __device__ void getEmissives(Triangle **ptr_emissives, int &nE) {
+    ptr_emissives = &(m_mesh->m_emissives);
+    nE = m_mesh->nE;
+  }
+
  private:
-  //Mesh *m_mesh;
+  Mesh *m_mesh;
   bbox_t m_bbox;
 
   __host__ __device__ float signedDistance(vecF point, vecF s0, vecF s1, vecF normal) {
