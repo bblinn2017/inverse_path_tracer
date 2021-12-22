@@ -25,18 +25,45 @@ typedef Eigen::Matrix3f mat3F;
 
 enum shape_type_t {Cube=0,Sphere=1,Cornell=2,Other=3};
 
+struct mat_t {
+
+  real_t diffuse[3];
+  real_t specular[3];
+  real_t transmittance[3];
+  real_t emission[3];
+  real_t shininess;
+  real_t ior;       // index of refraction
+  real_t dissolve;
+  int illum;
+
+  void copy(void *dst, void *src, size_t size) {
+    cudaMemcpy(dst,src,size,cudaMemcpyHostToDevice);
+  }
+
+  mat_t(material_t material) {
+    copy(diffuse,material.diffuse,3*sizeof(real_t));
+    copy(specular,material.specular,3*sizeof(real_t));
+    copy(transmittance,material.transmittance,3*sizeof(real_t));
+    copy(emission,material.emission,3*sizeof(real_t));
+    copy(&shininess,&material.shininess,sizeof(real_t));
+    copy(&ior,&material.ior,sizeof(real_t));
+    copy(&dissolve,&material.dissolve,sizeof(real_t));
+    copy(&illum,&material.illum,sizeof(int));
+  }
+};
+
 class Triangle {
  public:
   int idx;
-  material_t *material;
+  mat_t *material;
   vecF vertices[3];
   vecF normal;
   vecF center;
 
   __host__ __device__ Triangle(int i, material_t m, vecF vs[]) {
     idx = i;
-    cudaMalloc(&material,sizeof(material_t));
-    cudaMemcpy(material,&m,sizeof(material_t),cudaMemcpyHostToDevice);
+    cudaMallocManaged(&material,sizeof(mat_t));
+    new(material) mat_t(m);
     center = vecF::Zero();
     for (int j = 0; j < 3; j++){
       vertices[j] = vs[j];
@@ -305,12 +332,12 @@ class Object {
       normal = tri->normal;
       center = tri->center;
 
-      denom = abs(normal.dot(ray.d));
-      if (denom < MIN_DOT) {continue;}
+      denom = normal.dot(ray.d);
+      if (abs(denom) < MIN_DOT) {continue;}
       
-      t = (ray.p - center).dot(normal) / denom;
+      t = (ray.p - center).dot(normal) / -denom;
       if (t < 0 || t >= intersection.t) {continue;}
-
+      
       point = ray.p + ray.d * t;
       has_int = true;
       for (int j = 0; j < 3; j++) {
@@ -377,9 +404,9 @@ class Object {
       // Create random mat
       material_t rand_mat;
       InitMaterial(&rand_mat);
-      for (int i = 0; i < 3; i++) {rand_mat.diffuse[i] = (real_t) rand(); rand_mat.specular[i] = (real_t) rand();}
-      rand_mat.shininess = (real_t) rand();
-      rand_mat.ior = (real_t) rand();
+      for (int i = 0; i < 3; i++) {rand_mat.diffuse[i] = (real_t) rand() / RAND_MAX; rand_mat.specular[i] = (real_t) rand() / RAND_MAX;}
+      rand_mat.shininess = (real_t) rand() / RAND_MAX;
+      rand_mat.ior = (real_t) rand() / RAND_MAX;
 
       for (int j = 0; j < mat_ids.size(); j++) {
 	faces->push_back(vecI(f_idx[3*j].vertex_index,
@@ -395,11 +422,6 @@ class Object {
 	face_materials->push_back(mat);
       }
     }
-    for (int i = 0; i < vertices->size(); i++) {
-      vecF v = (*vertices)[i];
-      printf("%f %f %f\n",v[0],v[1],v[2]);
-    }
-    exit(0);
     
     return valid_;
   }

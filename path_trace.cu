@@ -35,8 +35,9 @@ __host__ __device__ vecF radiance(Scene *scene, Ray ray, int recursion) {
     if (!intersect.hit) {return vecF(0,0,0);}
 
     Triangle *tri = intersect.tri;
-    material_t *mat = tri->material;
-    return vecF(mat->diffuse[0],mat->diffuse[1],mat->diffuse[2]);
+    mat_t *mat = tri->material;
+    vecF diff = vecF(mat->diffuse[0],mat->diffuse[1],mat->diffuse[2]);
+    return diff;
 
     // Emission
     vecF L_e;
