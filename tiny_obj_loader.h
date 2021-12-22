@@ -59,6 +59,7 @@ THE SOFTWARE.
 #include <map>
 #include <string>
 #include <vector>
+#include "material.h"
 
 // TODO(syoyo): Better C++11 detection for older compiler
 #if __cplusplus > 199711L
