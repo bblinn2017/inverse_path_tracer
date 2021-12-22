@@ -317,6 +317,39 @@ struct material_t {
 
   #endif
   };
+  
+  struct attrib_t {
+    std::vector<real_t> vertices;  // 'v'(xyz)
+
+    // For backward compatibility, we store vertex weight in separate array.
+    std::vector<real_t> vertex_weights;  // 'v'(w)
+    std::vector<real_t> normals;         // 'vn'
+    std::vector<real_t> texcoords;       // 'vt'(uv)
+
+    // For backward compatibility, we store texture coordinate 'w' in separate
+    // array.
+    std::vector<real_t> texcoord_ws;  // 'vt'(w)
+    std::vector<real_t> colors;       // extension: vertex colors
+
+    //
+    // TinyObj extension.
+    //
+
+    // NOTE(syoyo): array index is based on the appearance order.
+    // To get a corresponding skin weight for a specific vertex id `vid`,
+    // Need to reconstruct a look up table: `skin_weight_t::vertex_id` == `vid`
+    // (e.g. using std::map, std::unordered_map)
+    std::vector<skin_weight_t> skin_weights;
+
+    attrib_t() {}
+
+    //
+    // For pybind11
+    //
+    const std::vector<real_t> &GetVertices() const { return vertices; }
+
+    const std::vector<real_t> &GetVertexWeights() const { return vertex_weights; }
+  };
 
   bool LoadObj(attrib_t *attrib, std::vector<shape_t> *shapes,
                std::vector<material_t> *materials, std::string *warn,
