@@ -11,6 +11,7 @@
 #include "tiny_obj_loader.h" 
 
 #define MIN_DOT 1e-4
+#define EPSILON 1e-4
 
 #ifdef USE_DOUBLE
 typedef double real_t;
@@ -22,6 +23,7 @@ typedef Eigen::Vector3f vecF;
 typedef Eigen::Vector3i vecI;
 typedef Eigen::Matrix4f mat4F;
 typedef Eigen::Matrix3f mat3F;
+typedef Eigen::Affine3f aff3F;
 
 enum shape_type_t {Cube=0,Sphere=1,Cornell=2,Other=3};
 
@@ -59,6 +61,7 @@ class Triangle {
   vecF vertices[3];
   vecF normal;
   vecF center;
+  float area;
 
   __host__ __device__ Triangle(int i, material_t m, vecF vs[]) {
     idx = i;
@@ -72,6 +75,7 @@ class Triangle {
     vecF a = vertices[1] - vertices[0];
     vecF b = vertices[2] - vertices[1];
     normal = a.cross(b);
+    area = normal.norm();
     normal.normalize();
   }
 
@@ -79,10 +83,6 @@ class Triangle {
 
   __host__ __device__ ~Triangle() {
     cudaFree(material);
-  }
-  
-  __host__ __device__ float area() {
-    return (vertices[0]-vertices[1]).cross(vertices[1]-vertices[2]).norm() / 2.;
   }
 };
 
@@ -93,6 +93,7 @@ class Mesh {
   vecI *m_faces;
   Triangle *m_triangles;
   Triangle **m_emissives;
+  float *m_probabilities;
 
   int m_nV,m_nF,m_nT,m_nE;
 
@@ -167,14 +168,16 @@ class Ray {
 
 __host__ __device__ struct intersection_t {
   float t;
-  bool hit;
+  vecF hit;
   Triangle *tri;
 
-  intersection_t() {
+  __host__ __device__ intersection_t() {
     t = INFINITY;
-    hit = false;
+    hit = vecF::Zero();
     tri = NULL;
   }
+
+  __host__ __device__ operator bool() {return t != INFINITY;}
 };
 
 __host__ __device__ struct bbox_t {
@@ -229,8 +232,8 @@ __host__ __device__ struct bbox_t {
   float surfaceArea() {return vecF(extent[1],extent[2],extent[0]).dot(extent) * 2.;}
 
   __host__ __device__ bool intersect(Ray ray, float &tmin, float &tmax) {   
-    mat3F div_arg;
-    for (int i = 0; i < 3; i++) {div_arg(i,i) = 1./ray.d[i];}
+    aff3F div_arg = aff3F::Identity();
+    div_arg.scale(ray.d.cwiseInverse());
     vecF l1 = div_arg * (min - ray.p);
     vecF l2 = div_arg * (max - ray.p);
 
@@ -270,7 +273,7 @@ class Object {
 	 std::string mtl_file="") {
 
     // Transform                                                                                   
-    Eigen::Affine3f T = Eigen::Affine3f::Identity();
+    aff3F T = aff3F::Identity();
     T.scale(scl);
     float angle = ori.norm();
     ori.normalize();
@@ -336,7 +339,7 @@ class Object {
       if (abs(denom) < MIN_DOT) {continue;}
       
       t = (ray.p - center).dot(normal) / -denom;
-      if (t < 0 || t >= intersection.t) {continue;}
+      if (t < EPSILON || t >= intersection.t) {continue;}
       
       point = ray.p + ray.d * t;
       has_int = true;
@@ -344,10 +347,11 @@ class Object {
 	sd = signedDistance(point,tri->vertices[j],tri->vertices[(j+1)%3],normal);
 	if (sd > 0) {has_int = false;}
       }
+      
       if (!has_int) {continue;}
 
       intersection.t = t;
-      intersection.hit = has_int;
+      intersection.hit = point;
       intersection.tri = tri;
     }
   }
@@ -365,7 +369,7 @@ class Object {
 		       std::vector<vecF> *vertices,
 		       std::vector<vecI> *faces,
 		       std::vector<material_t> *face_materials,
-		       Eigen::Affine3f T) {
+		       aff3F T) {
 
     std::filebuf obj_fb;
     if(!obj_fb.open(obj_file,std::ios::in)) {
@@ -398,16 +402,18 @@ class Object {
 
     std::vector<index_t> f_idx;
     std::vector<int> mat_ids;
+
+    // Create random mat                                                                            
+    material_t rand_mat;
+    InitMaterial(&rand_mat);
+    for (int i = 0; i < 3; i++) {rand_mat.diffuse[i] = (real_t) rand() / RAND_MAX; 
+      rand_mat.specular[i] = (real_t) rand() / RAND_MAX;}
+    rand_mat.shininess = (real_t) rand() / RAND_MAX;
+    rand_mat.ior = (real_t) rand() / RAND_MAX;
+    
     for (int i = 0; i < shapes.size(); i++) {
       f_idx = shapes[i].mesh.indices;
       mat_ids = shapes[i].mesh.material_ids;
-      // Create random mat
-      material_t rand_mat;
-      InitMaterial(&rand_mat);
-      for (int i = 0; i < 3; i++) {rand_mat.diffuse[i] = (real_t) rand() / RAND_MAX; rand_mat.specular[i] = (real_t) rand() / RAND_MAX;}
-      rand_mat.shininess = (real_t) rand() / RAND_MAX;
-      rand_mat.ior = (real_t) rand() / RAND_MAX;
-
       for (int j = 0; j < mat_ids.size(); j++) {
 	faces->push_back(vecI(f_idx[3*j].vertex_index,
 			      f_idx[3*j+1].vertex_index,

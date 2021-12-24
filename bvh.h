@@ -71,7 +71,8 @@ class BVH {
           obj = m_objects[node.start+o];
 	  intersection_t curr;
           obj.getIntersection(ray,curr);
-          if (curr.hit) {
+	  
+          if (curr) {
 
             if (occlusion) {return;}
 
