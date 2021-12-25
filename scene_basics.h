@@ -25,6 +25,11 @@ typedef Eigen::Matrix4f mat4F;
 typedef Eigen::Matrix3f mat3F;
 typedef Eigen::Affine3f aff3F;
 
+__host__ __device__ vecF CMIN(vecF x, vecF y) {return vecF(min(x[0],y[0]),min(x[1],y[1]),min(x[2],y[2]));}
+__host__ __device__ vecF CMAX(vecF x, vecF y) {return vecF(max(x[0],y[0]),max(x[1],y[1]),max(x[2],y[2]));}
+__host__ __device__ void PRINT(vecF v) {printf("%f %f %f\n",v[0],v[1],v[2]);}
+__host__ __device__ void PRINT(mat3F m) {for (int i = 0; i < 3; i++) {for(int j = 0; j < 3; j++) {printf("%f ",m(i,j));} printf("\n");}}
+
 enum shape_type_t {Cube=0,Sphere=1,Cornell=2,Other=3};
 
 struct mat_t {
@@ -59,11 +64,12 @@ class Triangle {
   int idx;
   mat_t *material;
   vecF vertices[3];
+  mat3F normals;
   vecF normal;
   vecF center;
   float area;
 
-  __host__ __device__ Triangle(int i, material_t m, vecF vs[]) {
+  __host__ __device__ Triangle(int i, material_t m, vecF vs[], vecF *ns) {
     idx = i;
     cudaMallocManaged(&material,sizeof(mat_t));
     new(material) mat_t(m);
@@ -72,11 +78,17 @@ class Triangle {
       vertices[j] = vs[j];
       center += vs[j]/3.;
     }
+    
     vecF a = vertices[1] - vertices[0];
     vecF b = vertices[2] - vertices[1];
+
     normal = a.cross(b);
-    area = normal.norm();
+    area = normal.norm() / 2.;
     normal.normalize();
+    
+    for (int i = 0; i < 3; i++) {
+      normals.col(i) = (ns) ? ns[i] : normal;
+    }
   }
 
   __host__ __device__ Triangle() {}
@@ -84,22 +96,35 @@ class Triangle {
   __host__ __device__ ~Triangle() {
     cudaFree(material);
   }
+  
+  __host__ __device__ vecF getNormal(vecF point) {
+    vecF weights; float weight;
+    for (int i = 0; i < 3; i++) {
+      weight = 0.5 * abs((vertices[(i+1)%3] - point).cross(vertices[(i+2)%3] - point).norm()) / area;
+      weights[i] = weight;
+    }
+    vecF normal = normals * weights;
+    normal.normalize();
+    return normal;
+  }
 };
 
 class Mesh {
  public:
   vecF m_position;
-  vecF *m_vertices;
-  vecI *m_faces;
+  //vecF *m_vertices;
+  //vecF *m_normals;
+  //vecI *m_faces;
   Triangle *m_triangles;
   Triangle **m_emissives;
   float *m_probabilities;
 
   int m_nV,m_nF,m_nT,m_nE;
 
-  Mesh(vecF pos, std::vector<material_t> ms, std::vector<vecF> vs, std::vector<vecI> fs) {
+  Mesh(vecF pos, std::vector<material_t> ms, std::vector<vecF> vs, std::vector<vecF> ns, std::vector<vecI> fs) {
     m_position = pos;
-    
+
+    /*
     cudaMallocManaged(&m_vertices,sizeof(vecF)*vs.size());
     cudaMemcpy(m_vertices,vs.data(),sizeof(vecF)*vs.size(),cudaMemcpyHostToDevice);
     m_nV = vs.size();
@@ -107,15 +132,23 @@ class Mesh {
     cudaMallocManaged(&m_faces,sizeof(vecI)*fs.size());
     cudaMemcpy(m_faces,fs.data(),sizeof(vecI)*fs.size(),cudaMemcpyHostToDevice);
     m_nF = fs.size();
+    */
 
     cudaMallocManaged(&m_triangles,sizeof(Triangle)*fs.size());
     std::vector<Triangle *> es;
     for (int i = 0; i < fs.size(); i++) {
-      vecI face = m_faces[i];
-      vecF tri_v[] = {m_vertices[face[0]],
-                      m_vertices[face[1]],
-                      m_vertices[face[2]]};
-      new(&(m_triangles[i])) Triangle(i,ms[i],tri_v);
+      vecI face = fs[i];
+      vecF tri_v[] = {vs[face[0]],
+                      vs[face[1]],
+                      vs[face[2]]};
+      vecF *tri_n = NULL;
+      if (ns.size() == vs.size()) {
+	vecF normals[] = {ns[face[0]],
+			  ns[face[1]],
+			  ns[face[2]]};
+	tri_n = normals;
+      }
+      new(&(m_triangles[i])) Triangle(i,ms[i],tri_v,tri_n);
       real_t *e = ms[i].emission;
       if (e[0] > 0. || e[1] > 0. || e[2] > 0.) {
 	es.push_back(&(m_triangles[i]));
@@ -128,8 +161,8 @@ class Mesh {
     m_nE = es.size();
   }
   ~Mesh() {
-    cudaFree(m_vertices);
-    cudaFree(m_faces);
+    //cudaFree(m_vertices);
+    //cudaFree(m_faces);
     cudaFree(m_triangles);
     cudaFree(m_emissives);
   }
@@ -192,28 +225,14 @@ __host__ __device__ struct bbox_t {
   }
 
   void expandToInclude(vecF o) {
-    Eigen::MatrixXf mat(2,3);
-    // Max
-    mat << min,
-      o;
-    min = mat.rowwise().minCoeff();
-    // Min
-    mat << max,
-      o;
-    max = mat.rowwise().maxCoeff();
+    min = CMIN(min,o);
+    max = CMAX(max,o);
     extent = max - min;
   }
 
   void expandToInclude(bbox_t o) {
-    Eigen::MatrixXf mat(2,3);
-    // Max
-    mat<< min,
-      o.min;
-    min = mat.rowwise().minCoeff();
-    // Min
-    mat<< max,
-      o.max;
-    max = mat.rowwise().maxCoeff();
+    min = CMIN(min,o.min);
+    max = CMAX(max,o.max);
     extent = max - min;
   }
 
@@ -246,11 +265,8 @@ __host__ __device__ struct bbox_t {
       }
     }
 
-    Eigen::MatrixXf m(2,3);
-    m << l1,
-      l2;
-    vecF lmax = m.rowwise().maxCoeff();
-    vecF lmin = m.rowwise().minCoeff();
+    vecF lmax = CMAX(l1,l2);
+    vecF lmin = CMIN(l1,l2);
 
     for (int i = 0; i < 3; i++) {
       if (lmin[i] > 0 || lmax[i] <= lmin[i]) {
@@ -272,13 +288,16 @@ class Object {
 	 std::string obj_file="",
 	 std::string mtl_file="") {
 
-    // Transform                                                                                   
+    // Transform 
     aff3F T = aff3F::Identity();
-    T.scale(scl);
+    // Translate
+    T.translate(pos);
+    // Rotate
     float angle = ori.norm();
     ori.normalize();
     T.rotate(Eigen::AngleAxisf(angle,ori));
-    T.translate(pos);
+    // Scale
+    T.scale(scl);
 
     // Load Mesh                                            
     switch(shp) {
@@ -296,19 +315,21 @@ class Object {
     }
 
     std::vector<vecF> vertices;
+    std::vector<vecF> normals;
     std::vector<vecI> faces;
     std::vector<material_t> materials;
 
-    if (!ParseFromString(obj_file,mtl_file,&vertices,&faces,&materials,T)) {exit(1);}
+    if (!ParseFromString(obj_file,mtl_file,&vertices,&normals,&faces,&materials,T)) {exit(1);}
     
     // Set Bounding Box
+    m_bbox.setP(pos);
     for (int i = 0; i < vertices.size(); i++) {
-      m_bbox.expandToInclude(vertices[i]);
+       m_bbox.expandToInclude(vertices[i]);
     }
 
     // Create Mesh
     cudaMallocManaged(&m_mesh,sizeof(Mesh));
-    m_mesh = new(m_mesh) Mesh(pos,materials,vertices,faces);
+    m_mesh = new(m_mesh) Mesh(pos,materials,vertices,normals,faces);
   };
 
   __host__ __device__ Object() {}
@@ -332,8 +353,8 @@ class Object {
     for (int i = 0; i < m_mesh->m_nT; i++) {
       tri = &(m_mesh->m_triangles[i]);
 
-      normal = tri->normal;
       center = tri->center;
+      normal = tri->normal;
 
       denom = normal.dot(ray.d);
       if (abs(denom) < MIN_DOT) {continue;}
@@ -367,6 +388,7 @@ class Object {
   bool ParseFromString(const std::string &obj_file,
 		       const std::string &mtl_file,
 		       std::vector<vecF> *vertices,
+		       std::vector<vecF> *vert_normals,
 		       std::vector<vecI> *faces,
 		       std::vector<material_t> *face_materials,
 		       aff3F T) {
@@ -396,8 +418,13 @@ class Object {
     bool valid_ = LoadObj(&attrib, &shapes, &materials, &warning, &error, &obj_ifs, &mtl_ss, true, true);
     
     std::vector<real_t> v_xyz = attrib.vertices;
+    std::vector<real_t> n_xyz = attrib.normals;
     for (int i = 0; i < v_xyz.size() / 3; i++) {
       vertices->push_back(T * vecF(v_xyz[3*i],v_xyz[3*i+1],v_xyz[3*i+2]));
+    }
+    mat3F T_2 = T.linear().transpose().inverse();
+    for (int i = 0; i < n_xyz.size() / 3; i++) {
+      vert_normals->push_back(T_2 * vecF(n_xyz[3*i],n_xyz[3*i+1],n_xyz[3*i+2]));
     }
 
     std::vector<index_t> f_idx;
@@ -406,9 +433,13 @@ class Object {
     // Create random mat                                                                            
     material_t rand_mat;
     InitMaterial(&rand_mat);
-    for (int i = 0; i < 3; i++) {rand_mat.diffuse[i] = (real_t) rand() / RAND_MAX; 
-      rand_mat.specular[i] = (real_t) rand() / RAND_MAX;}
-    rand_mat.shininess = (real_t) rand() / RAND_MAX;
+    float spec = (real_t) rand() / RAND_MAX;
+    spec = (spec > 0.5) ? spec : 0.f;
+    for (int i = 0; i < 3; i++) {
+      rand_mat.diffuse[i] = (real_t) rand() / RAND_MAX; 
+      rand_mat.specular[i] = spec;
+    }
+    rand_mat.shininess = (real_t) rand() / RAND_MAX * 100.f; 
     rand_mat.ior = (real_t) rand() / RAND_MAX;
     
     for (int i = 0; i < shapes.size(); i++) {

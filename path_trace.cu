@@ -14,8 +14,8 @@ const float HA = 90.f;
 const float AR = 1.f;
 #define IM_WIDTH 500
 #define IM_HEIGHT 500
-#define SAMPLE_NUM 100
-#define p_RR .9f
+#define SAMPLE_NUM 150
+#define p_RR .7f
 #define BLOCKSIZE 32
 #define NBLOCKS IM_WIDTH * IM_HEIGHT * SAMPLE_NUM / BLOCKSIZE + 1
 
@@ -29,21 +29,22 @@ __device__ mat3F BSDF(intersection_t intersect, vecF w, vecF w_i, bool isDirect)
     }
 
     float n = mat->shininess;
-    vecF norm = intersect.tri->normal;
-    vecF refl = w_i - 2 * norm.dot(w_i) * norm;
-    float coeff = (n+2)/2./M_PI * pow(refl.dot(w),n);
+    vecF norm = intersect.tri->getNormal(intersect.hit);
+    vecF refl = -w_i + 2 * norm.dot(w_i) * norm;
+    float coeff = (n+2)/2./M_PI * max(pow(refl.dot(w),n),0.f);
     vecF specular = vecF(mat->specular[0],mat->specular[1],mat->specular[2]) * coeff;
-
+        
     mat3F T = mat3F::Zero();
     for (int i = 0; i < 3; i++) {T(i,i) = diffuse[i] + specular[i];}
     return T;
 }
 
 __device__ vecF directLighting(Scene *scene, vecF d, intersection_t intersect, curandState_t &state) {
- 	  
+
     Triangle *t_curr = intersect.tri;
     Triangle **emissives; int n_e;
     scene->emissives(emissives,n_e);
+    if (!n_e) {return vecF::Zero();}
 
     float area_sum = 0.;
     for (int i = 0; i < n_e; i++) {
@@ -52,8 +53,10 @@ __device__ vecF directLighting(Scene *scene, vecF d, intersection_t intersect, c
     float p = curand_uniform(&state);
     float p_curr = 0.;
     int idx = 0;
-    while (p_curr < p) {
+    for (int i = 0; i < n_e; i++) {
     	  p_curr += emissives[idx]->area / area_sum;
+	  if (p_curr >= p) {break;}
+	  idx++;
     }
     float p_t = emissives[idx]->area / area_sum;
     
@@ -61,7 +64,7 @@ __device__ vecF directLighting(Scene *scene, vecF d, intersection_t intersect, c
     
     float r1 = curand_uniform(&state);
     float r2 = curand_uniform(&state);
-
+    
     vecF v1,v2,v3;
     v1 = t_emm->vertices[0]; v2 = t_emm->vertices[1]; v3 = t_emm->vertices[2];
     vecF emm_point = (1 - pow(r1,0.5)) * v1 +
@@ -73,15 +76,15 @@ __device__ vecF directLighting(Scene *scene, vecF d, intersection_t intersect, c
     toLight.normalize();
 
     Ray light_ray = Ray(curr_int,toLight);
-
-    float cos_theta = t_curr->normal.dot(toLight);
+    
+    float cos_theta = t_curr->getNormal(intersect.hit).dot(toLight);
     if (cos_theta < 0.) {return vecF::Zero();}
 
     intersection_t i;
     scene->getIntersection(light_ray,i);
     if (!i) {return vecF::Zero();}
     
-    float cos_theta_prime = -t_emm->normal.dot(toLight);
+    float cos_theta_prime = -t_emm->getNormal(i.hit).dot(toLight);
     if (cos_theta_prime < 0.) {return vecF::Zero();}    
 
     Triangle *t_int = i.tri;
@@ -99,32 +102,28 @@ __device__ float sampleNextDir(vecF normDir, bool isSpecular, float shininess, v
     
     float phi = 2 * M_PI * curand_uniform(&state);
     float theta = acos(pow(curand_uniform(&state),isSpecular ? 1./(shininess+1.) : .5));
-
-    vecF hemiDir = vecF(sin(theta)*cos(phi),sin(theta)*sin(phi),cos(theta));
-
-    mat3F R = mat3F::Identity();
-    if (normDir[2] == -1) {
-       R *= -1;
-    } else {
-      vecF axis = vecF(0,0,1).cross(normDir);
-      float angle = asin(axis.norm());
-      axis.normalize();
-      R = Eigen::AngleAxisf(angle,axis);
-    }
     
+    vecF hemiDir = vecF(sin(theta)*cos(phi),sin(theta)*sin(phi),cos(theta));
+    
+    mat3F R;
+    if (normDir[2] == -1) {
+      R = -mat3F::Identity();
+    } else {
+      R = Eigen::Quaternionf::FromTwoVectors(vecF(0,0,1),normDir).matrix();
+    }
     nextDir = R * hemiDir;
     nextDir.normalize();
 
+    vecF output = R * vecF(0,0,1);
     return isSpecular ? pow((shininess+1) * cos(theta), shininess) : 1 / M_PI;
 }
 
 __device__ bool radiance(Scene *scene, Ray &ray, vecF &L_e, vecF &L_d, mat3F &multiplier, int recursion, curandState_t &state) {
-	   	   
+    	   
     intersection_t intersect;
     scene->getIntersection(ray,intersect);    
+    if (!intersect) {return false;}
     
-    if (intersect.t == INFINITY) {return false;}    
-
     Triangle *tri = intersect.tri;
     mat_t *mat = tri->material;
     
@@ -136,22 +135,21 @@ __device__ bool radiance(Scene *scene, Ray &ray, vecF &L_e, vecF &L_d, mat3F &mu
     // Direct
     L_d = directLighting(scene, ray.d, intersect, state);
 
-    return false;
     // Indirect
     float pRecur = curand_uniform(&state);
     if (pRecur >= p_RR) {return false;}
-    bool isSpecular = mat->specular[0] || mat->specular[1] || mat->specular[2];
+    bool isSpecular = (mat->specular[0] || mat->specular[1] || mat->specular[2]) && mat->shininess;
     vecF nextDir;
     float p_sample = sampleNextDir(tri->normal,isSpecular,mat->shininess,nextDir,state);
     Ray nextRay = Ray(intersect.hit,nextDir);
     mat3F bsdf = BSDF(intersect,ray.d,nextDir,false);
-    float coeff = nextDir.dot(tri->normal) / p_sample / p_RR;
-    
+    float coeff = nextDir.dot(tri->getNormal(intersect.hit)) / p_sample / p_RR;    
+
     // Setup next recursion - the multiplier and the ray
     multiplier = multiplier * bsdf * coeff;
     ray = nextRay;
-
-    return true;  
+    
+    return true;
 }
 
 __global__ void renderSample(Scene *scene, vecF values[], unsigned long long seed) {
@@ -208,11 +206,15 @@ int main(int argc, char argv[]) {
     int n = 2;
     cudaMallocManaged(&objects,sizeof(Object)*n);
     new(&(objects[0])) Object(shape_type_t::Cornell,
-				vecF(0,0,2.),
+				vecF(0,0,4),
                   		vecF(0,0,0),
                   		vecF(2,2,2));
-    new(&(objects[1])) Object(shape_type_t::Sphere);
-    exit(0);
+    new(&(objects[1])) Object(shape_type_t::Sphere,
+				vecF(0,-1,4),
+				vecF(0,0,0),
+				vecF(2,2,2)
+    );
+    
     Camera *camera;
     cudaMallocManaged(&camera,sizeof(Camera));
     vecF eye = vecF::Zero();
