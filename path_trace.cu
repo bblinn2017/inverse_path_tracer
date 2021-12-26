@@ -14,9 +14,9 @@ const float HA = 90.f;
 const float AR = 1.f;
 #define IM_WIDTH 500
 #define IM_HEIGHT 500
-#define SAMPLE_NUM 150
+#define SAMPLE_NUM 100
 #define p_RR .7f
-#define BLOCKSIZE 32
+#define BLOCKSIZE 128
 #define NBLOCKS IM_WIDTH * IM_HEIGHT * SAMPLE_NUM / BLOCKSIZE + 1
 
 __device__ mat3F BSDF(intersection_t intersect, vecF w, vecF w_i, bool isDirect) {
@@ -134,7 +134,7 @@ __device__ bool radiance(Scene *scene, Ray &ray, vecF &L_e, vecF &L_d, mat3F &mu
 
     // Direct
     L_d = directLighting(scene, ray.d, intersect, state);
-
+    
     // Indirect
     float pRecur = curand_uniform(&state);
     if (pRecur >= p_RR) {return false;}
@@ -156,20 +156,23 @@ __global__ void renderSample(Scene *scene, vecF values[], unsigned long long see
 
     int curr = blockIdx.x * blockDim.x + threadIdx.x;
     if (curr >= IM_WIDTH * IM_HEIGHT * SAMPLE_NUM) {return;}
-    
-    int r = curr / SAMPLE_NUM / IM_WIDTH;
-    int c = (curr / SAMPLE_NUM) % IM_WIDTH;
-
-    vecF p = vecF::Zero();
-    vecF d = vecF(2 * ((float) c + 0.5) / (float) IM_WIDTH - 1., 1. - 2 * ((float) r + 0.5) / (float) IM_HEIGHT, 1);
-    d.normalize();
-    Ray ray = Ray(p,d);
-    
-    ray.transform(scene->getInverseViewMatrix());
 
     seed += curr;
     curandState_t state;
     curand_init(seed,0,0,&state);
+    
+    int r = curr / SAMPLE_NUM / IM_WIDTH;
+    int c = (curr / SAMPLE_NUM) % IM_WIDTH;
+
+    float x = 2.f * ((float) c + curand_uniform(&state)) / (float) IM_WIDTH - 1.f;
+    float y = 1.f - 2.f * ((float) r + curand_uniform(&state)) / (float) IM_HEIGHT;
+
+    vecF p = vecF::Zero();
+    vecF d = vecF(x, y, 1);
+    d.normalize();
+    Ray ray = Ray(p,d);
+    
+    ray.transform(scene->getInverseViewMatrix());
     
     vecF L = vecF::Zero();
 
@@ -193,7 +196,7 @@ __global__ void renderSample(Scene *scene, vecF values[], unsigned long long see
 
 void renderScene(Scene *scene, vecF values[]) {
     // Render Scene
-    unsigned long long seed = (unsigned long long) time(NULL);
+    unsigned long long seed = (unsigned long long) time(NULL); 
     renderSample<<<NBLOCKS,BLOCKSIZE>>>(scene,values,seed);
     cudaDeviceSynchronize();
     cudaError_t err = cudaGetLastError();
@@ -209,10 +212,10 @@ int main(int argc, char argv[]) {
 				vecF(0,0,4),
                   		vecF(0,0,0),
                   		vecF(2,2,2));
-    new(&(objects[1])) Object(shape_type_t::Sphere,
-				vecF(0,-1,4),
+    new(&(objects[1])) Object(shape_type_t::Cube,
+				vecF(0,-1.5,4),
 				vecF(0,0,0),
-				vecF(2,2,2)
+				vecF(1,1,1)
     );
     
     Camera *camera;

@@ -21,8 +21,10 @@ typedef float real_t;
 
 typedef Eigen::Vector3f vecF;
 typedef Eigen::Vector3i vecI;
+typedef Eigen::VectorXf vecXF;
 typedef Eigen::Matrix4f mat4F;
 typedef Eigen::Matrix3f mat3F;
+typedef Eigen::MatrixX3f matXF;
 typedef Eigen::Affine3f aff3F;
 
 __host__ __device__ vecF CMIN(vecF x, vecF y) {return vecF(min(x[0],y[0]),min(x[1],y[1]),min(x[2],y[2]));}
@@ -344,13 +346,14 @@ class Object {
   }
 
   __host__ __device__ void getIntersection(Ray ray, intersection_t &intersection) {
-
+    
     float t, denom, sd;
     vecF normal, center, point;
     Triangle *tri;
     bool has_int;
+    int nT = m_mesh->m_nT;
     
-    for (int i = 0; i < m_mesh->m_nT; i++) {
+    for (int i = 0; i < nT; i++) {
       tri = &(m_mesh->m_triangles[i]);
 
       center = tri->center;
@@ -360,13 +363,13 @@ class Object {
       if (abs(denom) < MIN_DOT) {continue;}
       
       t = (ray.p - center).dot(normal) / -denom;
-      if (t < EPSILON || t >= intersection.t) {continue;}
-      
+      if (t < EPSILON || t > intersection.t) {continue;}
+
       point = ray.p + ray.d * t;
       has_int = true;
       for (int j = 0; j < 3; j++) {
 	sd = signedDistance(point,tri->vertices[j],tri->vertices[(j+1)%3],normal);
-	if (sd > 0) {has_int = false;}
+	if (sd > 0) {has_int = false; break;}
       }
       
       if (!has_int) {continue;}
@@ -375,6 +378,7 @@ class Object {
       intersection.hit = point;
       intersection.tri = tri;
     }
+    
   }
 
   __host__ __device__ Triangle** getEmissives() {return m_mesh->m_emissives;}
@@ -430,7 +434,8 @@ class Object {
     std::vector<index_t> f_idx;
     std::vector<int> mat_ids;
 
-    // Create random mat                                                                            
+    // Create random mat
+    srand(time(NULL));
     material_t rand_mat;
     InitMaterial(&rand_mat);
     float spec = (real_t) rand() / RAND_MAX;
@@ -468,7 +473,19 @@ class Object {
     vecF out = (s1 - s0).cross(normal);
     out.normalize();
     float d = -out.dot(s1 + s0) / 2.;
-
     return point.dot(out) + d;
+  }
+
+  __host__ __device__ vecXF signedDistance(matXF point, matXF s0, matXF s1, matXF normal) {
+    
+    matXF diff  = s1 - s0;
+    matXF out(s0.rows(),3);
+    for (int i = 0; i < s0.rows(); i++) {
+      out.row(i) = diff.row(i).cross(normal.row(i));
+      out.row(i) /= out.row(i).norm();
+    }
+    matXF mean = (s1 + s0) / 2.;
+    vecXF d = -out.cwiseProduct(mean).rowwise().sum();
+    return point.cwiseProduct(out).rowwise().sum() + d;
   }
 };
