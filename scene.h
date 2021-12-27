@@ -1,11 +1,25 @@
 #include "bvh.h"
 
+#define EYE vecF(0.,0.,0.)
+#define LOOK vecF(0.,0.,1.)
+#define UP vecF(0.,1.,0.)
+#define HA 90.f
+#define AR 1.f
+#define IM_WIDTH 500
+#define IM_HEIGHT 500
+#define SAMPLE_NUM 100
+#define p_RR .7f
+#define BLOCKSIZE 512
+#define NBLOCKS IM_WIDTH * IM_HEIGHT * SAMPLE_NUM / BLOCKSIZE + 1
+
 class Camera {
  public:
-  __host__ __device__ Camera(vecF p,vecF d,vecF u,float ha,float ar) {
-    m_position = p;
-    m_direction = d;
-    m_up = u;
+  __host__ __device__ Camera(vecF p, vecF d, vecF u,float ha,float ar) {
+    m_position = vecF(p[0],p[1],p[2]);
+    m_direction = vecF(d[0],d[1],d[2]);
+    m_direction.normalize();
+    m_up = vecF(u[0],u[1],u[2]);
+    m_up.normalize();
     m_heightAngle = M_PI * ha / 360.f;
     m_aspectRatio = ar;
   }
@@ -49,23 +63,28 @@ class Camera {
 
 class Scene {
  public:
-
+  
   __host__ __device__ Scene(Camera * camera, Object *objects, int n) {
     m_camera = camera;
     m_objects = objects;
-    m_n = n;
+    m_nO = n;
+    m_nT = 0;
 
     std::vector<Triangle *> emissives;
     for (int i = 0; i < n; i++) {
       Object o = m_objects[i];
+
+      o.setOffsets(m_nT,m_nE);
+
       Triangle **o_emissives = o.getEmissives();
       for (int j = 0; j < o.nEmissives(); j++) {
 	emissives.push_back(o_emissives[j]);
       }
+      m_nT += o.nTriangles();
+      m_nE += o.nEmissives();
     }
     cudaMalloc(&m_emissives,sizeof(Triangle *)*emissives.size());
     cudaMemcpy(m_emissives,emissives.data(),sizeof(Triangle *)*emissives.size(),cudaMemcpyHostToDevice);
-    m_e = emissives.size();
     
     cudaMallocManaged(&m_bvh,sizeof(BVH));
     *m_bvh = BVH(objects,n);
@@ -83,16 +102,23 @@ class Scene {
     return m_camera->getInverseViewMatrix();
   }
 
-  __host__ __device__ void emissives(Triangle ** &emissives, int &e) {
+  __host__ __device__ void emissives(Triangle ** &emissives) {
     emissives = m_emissives;
-    e = m_e;
   }
+
+  __host__ __device__ int nTriangles() {return m_nT;}
+
+  __host__ __device__ int nObjects() {return m_nO;}
+
+  __host__ __device__ int nEmissives() {return m_nE;}
  
  private:
   Triangle **m_emissives;
-  int m_e;
   Camera *m_camera;
   Object *m_objects;
-  int m_n;
-  BVH *m_bvh; 
+  BVH *m_bvh;
+  
+  int m_nO;
+  int m_nE;
+  int m_nT;
 };

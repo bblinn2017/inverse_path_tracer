@@ -7,18 +7,6 @@
 #include <curand.h>
 #include <curand_kernel.h>
 
-const vecF EYE = vecF(0.,0.,0.);
-const vecF LOOK = vecF(0.,0.,1.);
-const vecF UP = vecF(0.,1.,0.);
-const float HA = 90.f;
-const float AR = 1.f;
-#define IM_WIDTH 500
-#define IM_HEIGHT 500
-#define SAMPLE_NUM 100
-#define p_RR .7f
-#define BLOCKSIZE 128
-#define NBLOCKS IM_WIDTH * IM_HEIGHT * SAMPLE_NUM / BLOCKSIZE + 1
-
 __device__ mat3F BSDF(intersection_t intersect, vecF w, vecF w_i, bool isDirect) {
     
     mat_t *mat = intersect.tri->material;
@@ -42,9 +30,10 @@ __device__ mat3F BSDF(intersection_t intersect, vecF w, vecF w_i, bool isDirect)
 __device__ vecF directLighting(Scene *scene, vecF d, intersection_t intersect, curandState_t &state) {
 
     Triangle *t_curr = intersect.tri;
-    Triangle **emissives; int n_e;
-    scene->emissives(emissives,n_e);
+    int n_e = scene->nEmissives();
     if (!n_e) {return vecF::Zero();}
+    Triangle **emissives;
+    scene->emissives(emissives);
 
     float area_sum = 0.;
     for (int i = 0; i < n_e; i++) {
@@ -199,8 +188,8 @@ void renderScene(Scene *scene, vecF values[]) {
     unsigned long long seed = (unsigned long long) time(NULL); 
     renderSample<<<NBLOCKS,BLOCKSIZE>>>(scene,values,seed);
     cudaDeviceSynchronize();
-    cudaError_t err = cudaGetLastError();
-    printf("%d\n",err);
+    //cudaError_t err = cudaGetLastError();
+    //printf("%d\n",err);
 }
 
 int main(int argc, char argv[]) {
@@ -220,12 +209,7 @@ int main(int argc, char argv[]) {
     
     Camera *camera;
     cudaMallocManaged(&camera,sizeof(Camera));
-    vecF eye = vecF::Zero();
-    vecF look = vecF(0,0,1);
-    vecF up = vecF(0,1,0);
-    float heightAngle = 90.f;
-    float aspectRatio = 1.f;
-    new(camera) Camera(eye,look,up,heightAngle,aspectRatio);
+    new(camera) Camera(EYE,LOOK,UP,HA,AR);
     
     Scene *scene;
     cudaMallocManaged(&scene,sizeof(Scene));

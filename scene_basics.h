@@ -63,7 +63,7 @@ struct mat_t {
 
 class Triangle {
  public:
-  int idx;
+  int idx, idxE;
   mat_t *material;
   vecF vertices[3];
   mat3F normals;
@@ -73,6 +73,7 @@ class Triangle {
 
   __host__ __device__ Triangle(int i, material_t m, vecF vs[], vecF *ns) {
     idx = i;
+    idxE = -1;
     cudaMallocManaged(&material,sizeof(mat_t));
     new(material) mat_t(m);
     center = vecF::Zero();
@@ -153,6 +154,7 @@ class Mesh {
       new(&(m_triangles[i])) Triangle(i,ms[i],tri_v,tri_n);
       real_t *e = ms[i].emission;
       if (e[0] > 0. || e[1] > 0. || e[2] > 0.) {
+	m_triangles[i].idxE = es.size();
 	es.push_back(&(m_triangles[i]));
       }
     }
@@ -283,12 +285,13 @@ __host__ __device__ struct bbox_t {
 
 class Object {
  public:
+  
   __host__ Object(shape_type_t shp,
-	 vecF pos=vecF(0.,0.,2.5),
-	 vecF ori=vecF(0.,0.,0.),
-	 vecF scl=vecF(1.,1.,1.),
-	 std::string obj_file="",
-	 std::string mtl_file="") {
+		  vecF pos=vecF(0.,0.,2.5),
+		  vecF ori=vecF(0.,0.,0.),
+		  vecF scl=vecF(1.,1.,1.),
+		  std::string obj_file="",
+		  std::string mtl_file="") {
 
     // Transform 
     aff3F T = aff3F::Identity();
@@ -384,6 +387,17 @@ class Object {
   __host__ __device__ Triangle** getEmissives() {return m_mesh->m_emissives;}
 
   __host__ __device__ int nEmissives() {return m_mesh->m_nE;}
+
+  __host__ __device__ int nTriangles() {return m_mesh->m_nT;}
+
+  __host__ __device__ void setOffsets(int currT, int currE) {
+    for (int i = 0; i < m_mesh->m_nT; i++) {
+      m_mesh->m_triangles[i].idx += currT;
+    }
+    for (int i = 0; i < m_mesh->m_nE; i++) {
+      m_mesh->m_emissives[i]->idxE += currE;
+    }
+  }
 
  private:
   Mesh *m_mesh;
