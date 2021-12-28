@@ -3,16 +3,16 @@
 #include <curand.h>
 #include <curand_kernel.h>
 
-__device__ void BSDF(intersection_t intersect, vecF w, vecF w_i, bool isDirect, float *factors) {
+__device__ void BSDF(intersection_t intersect, vecF w, vecF w_i, float n, bool isDirect, float *factors) {
     
     factors[PTYPE::DIFFUSE] = isDirect ? 1./M_PI : 1.;
     
     vecF norm = intersect.tri->getNormal(intersect.hit);
     vecF refl = -w_i + 2 * norm.dot(w_i) * norm;
-    factors[PTYPE::SPECULAR] = max(refl.dot(w),0.f);
+    factors[PTYPE::SPECULAR] = (n + 2.)/2./M_PI * pow(max(refl.dot(w),0.f),n);
 }
 
-__device__ void directLighting(Scene *scene, Image *image, vecF d, intersection_t intersect, LightEdge *lightEdges, curandState_t &state) {
+__device__ void directLighting(Scene *scene, Image *image, vecF d, intersection_t intersect, LightEdge *lightEdges, float shininess, float prev_weight, curandState_t &state) {
 
     Triangle *t_curr = intersect.tri;
     Triangle **emissives; int n_e = scene->nEmissives();
@@ -71,50 +71,86 @@ __device__ void directLighting(Scene *scene, Image *image, vecF d, intersection_
     int c = (curr / SAMPLE_NUM) % IM_WIDTH;
 
     // Update LightEdge
-    float ff = cos_theta * cos_theta_prime / pow(i.t, 2.);
+    float weight = prev_weight * cos_theta * cos_theta_prime / pow(i.t, 2.) / p_t;
     vecF light = L_o;
     vecF pixel = image->getValue(r,c);
-    float factors[2]; BSDF(intersect, d, toLight, true, factors);
+    float factors[2]; 
+    BSDF(intersect, d, toLight, shininess, true, factors);
     
-    int le_i = t_curr->idx*scene->nEmissives() + t_emm->idxE;
-    lightEdges[le_i].update(p_t,ff,light,pixel,factors);
+    int src = emissives[t_emm->idxE]->idx;
+    int dst = t_curr->idx;
+    int le_i = src * scene->nTriangles() + dst;
+    lightEdges[le_i].update(weight,light,pixel,factors);
     
     return;
 }
 
-__device__ bool radiance(Scene *scene, Image *image, Ray &ray, LightEdge *lightEdges, int recursion, curandState_t &state) {
+__device__ float sampleNextDir(vecF normDir, bool isSpecular, float shininess, vecF &nextDir, curandState_t &state) {
+    
+    float phi = 2 * M_PI * curand_uniform(&state);
+    float theta = acos(pow(curand_uniform(&state),isSpecular ? 1./(shininess+1.) : .5));
+    
+    vecF hemiDir = vecF(sin(theta)*cos(phi),sin(theta)*sin(phi),cos(theta));
+    
+    mat3F R;
+    if (normDir[2] == -1) {
+      R = -mat3F::Identity();
+    } else {
+      R = Eigen::Quaternionf::FromTwoVectors(vecF(0,0,1),normDir).matrix();
+    }
+    nextDir = R * hemiDir;
+    nextDir.normalize();
+
+    vecF output = R * vecF(0,0,1);
+    return isSpecular ? pow((shininess+1) * cos(theta), shininess) : 1. / M_PI;
+}
+
+__device__ int radiance(Scene *scene, int dst, Image *image, Ray &ray, LightEdge *lightEdges, int recursion, float &prev_weight, float *prev_factors, curandState_t &state) {
    	 
     intersection_t intersect;
     scene->getIntersection(ray,intersect);
-    if (!intersect) {return false;}
-    
+    if (!intersect) {return -1;}
+
     Triangle *tri = intersect.tri;
     mat_t *mat = tri->material;
-    
+    float shininess = curand_uniform(&state);
+
+    int src = tri->idx;
+    int nT = scene->nTriangles();
+    if (dst != nT) {
+       int le_i = src * nT + dst;
+       
+       int curr = blockIdx.x * blockDim.x + threadIdx.x;
+       int r = curr / SAMPLE_NUM / IM_WIDTH;
+       int c = (curr / SAMPLE_NUM) % IM_WIDTH;
+
+       vecF pixel = image->getValue(r,c);
+       lightEdges[le_i].update(prev_weight,vecF::Zero(),pixel,prev_factors);
+    }    
+
     // Emission
     // Not factoring in recursion 0 emitted light yet    
         
     // Direct
-    directLighting(scene, image, ray.d, intersect, lightEdges, state);
-
-    return false;
-    /*
+    directLighting(scene, image, ray.d, intersect, lightEdges, shininess, prev_weight, state);
+    
     // Indirect
     float pRecur = curand_uniform(&state);
-    if (pRecur >= p_RR) {return false;}
+    if (pRecur >= p_RR) {return -1;}
     
-    bool isSpecular = (mat->specular[0] || mat->specular[1] || mat->specular[2]) && mat->shininess;
+    // Setup next recursion - the ray, the weight, and the factors
+    bool isSpecular = bool(curand(&state) % 2);
     vecF nextDir;
-    float p_sample = sampleNextDir(tri->normal,isSpecular,mat->shininess,nextDir,state);
+    float p_sample = sampleNextDir(tri->normal,isSpecular,shininess,nextDir,state);
     Ray nextRay = Ray(intersect.hit,nextDir);
-    mat3F bsdf = BSDF(intersect,ray.d,nextDir,false);
-    float coeff = nextDir.dot(tri->getNormal(intersect.hit)) / p_sample / p_RR;    
-
-    // Setup next recursion - the multiplier and the ray
-    multiplier = multiplier * bsdf * coeff;
+    // Factors
+    BSDF(intersect,ray.d,nextDir,shininess,false,prev_factors);
+    // Weight
+    prev_weight *= nextDir.dot(tri->getNormal(intersect.hit)) / p_sample / p_RR;
+    // Ray
     ray = nextRay;
-    */
-    return true;
+
+    return src;
 }
 
 __global__ void renderSample(Scene *scene, Image *image, LightEdge lightEdges[], unsigned long long seed) {
@@ -136,12 +172,15 @@ __global__ void renderSample(Scene *scene, Image *image, LightEdge lightEdges[],
     vecF d = vecF(x, y, 1);
     d.normalize();
     Ray ray = Ray(p,d);
+    float weight = 1.;
+    float factors[2];
     
     ray.transform(scene->getInverseViewMatrix());
     
-    int recursion = 0; bool recur = true;
-    while (recur) {
-    	  recur = radiance(scene, image, ray, lightEdges, recursion, state);
+    int recursion = 0; 
+    int dst = scene->nTriangles();
+    while (dst != -1) {
+    	  dst = radiance(scene, dst, image, ray, lightEdges, recursion, weight, factors, state);
 	  recursion++;
     }
 }
@@ -155,21 +194,21 @@ void renderScene(Scene *scene, Image *image, LightEdge lightEdges[]) {
     printf("%d\n",err);
 }
 
-void processGraph(Scene *scene, LightEdge *lightEdges) {
-     int nT = scene->nTriangles();
-     int nE = scene->nEmissives();
-     int nLE = nT * nE;
-     for (int i = 0; i < nLE; i++) {lightEdges[i].normalize();}
+std::vector<ProcessedEdges> processEdges(Scene *scene, LightEdge lightEdges[]) {
+    
+    int nT = scene->nTriangles();
+    std::vector<ProcessedEdges> allEdges(nT);
 
-     for (int i = 0; i < nT; i++) {
-     	 std::vector<int> ws;
-	 for (int j = 0; j < nE; j++) {
-	     int n = lightEdges[i*nE + j].n;
-	     float ff = lightEdges[i*nE + j].ff_sum;
-	     ns.append(n); ffs.append(ff);
-	 }
-	 printf("%d %f\n",n,ff);
-     }
+    std::cout << "dst,src,p_src,w_d,w_s,l_r,l_g,l_b,p_r,p_g,p_b" << std::endl;
+    for (int dst = 0; dst < nT; dst++) {
+    	std::vector<LightEdge> dstEdges(nT);
+    	for (int src = 0; src < nT; src++) {
+	
+	    dstEdges[src] = lightEdges[src*nT + dst];
+	}
+	ProcessedEdges pE = ProcessedEdges(dst,dstEdges);
+    }
+    return allEdges;
 }
 
 int main(int argc, char argv[]) {
@@ -200,12 +239,13 @@ int main(int argc, char argv[]) {
     new(scene) Scene(camera,objects,n);
 
     LightEdge *lightEdges;
-    int nLE = scene->nTriangles() * scene->nEmissives();
+    int nT = scene->nTriangles();
+    int nLE = nT * nT;
     cudaMallocManaged(&lightEdges,sizeof(LightEdge)*nLE);
     new(lightEdges) LightEdge[nLE];
 
     renderScene(scene,image,lightEdges);
-    processGraph(scene,lightEdges);
+    std::vector<ProcessedEdges> procEdges = processEdges(scene,lightEdges);
 
     cudaFree(lightEdges);
     cudaFree(objects);

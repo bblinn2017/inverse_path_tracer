@@ -11,7 +11,7 @@
 #include "tiny_obj_loader.h" 
 
 #define MIN_DOT 1e-4
-#define EPSILON 1e-4
+#define EPSILON 1e-3
 
 #ifdef USE_DOUBLE
 typedef double real_t;

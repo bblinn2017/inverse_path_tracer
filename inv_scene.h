@@ -28,15 +28,13 @@ struct LightEdge {
   
   int n;
   float w_sum;
-  float ff_sum;
   float pixel_sum[3];
   float light_sum[3];
   float factors_sum[2];
   
-  __device__ void update(float w, float ff, vecF pixel, vecF light, float *factors) {
+  __device__ void update(float w, vecF pixel, vecF light, float *factors) {
     atomicAdd_system(&n,1);
     atomicAdd_system(&w_sum,w);
-    atomicAdd_system(&ff_sum,w*ff);
     for (int i = 0; i < 3; i++) {
       atomicAdd_system(&(pixel_sum[i]),w*pixel[i]);
       atomicAdd_system(&(light_sum[i]),w*light[i]);
@@ -46,7 +44,6 @@ struct LightEdge {
 
   __host__ __device__ void normalize() {
     float weight = (w_sum) ? w_sum : 1.;
-    ff_sum /= weight;
     for (int i = 0; i < 3; i++) {
       pixel_sum[i] /= weight;
       light_sum[i] /= weight;
@@ -55,12 +52,44 @@ struct LightEdge {
   }
 };
 
-struct TriData {
-  
-  std::vector<weights> e_weights;
+struct ProcessedEdges {
 
-  TriData(std::vector<weights> ws) {
-    e_weights = ws;
-  }
+  int dst;
+  std::vector<float> p_src;
+  std::vector<float> w_diffuse;
+  std::vector<float> w_specular;
+  std::vector<vecF> light;
+  std::vector<vecF> pixel;
   
-}
+  ProcessedEdges() {}
+
+  ProcessedEdges(int d, std::vector<LightEdge> les) {
+    float w_total = 0.;
+    for (int i = 0; i < les.size(); i++) {w_total+= les[i].w_sum;}
+    w_total = (w_total) ? w_total : 1.;
+    for (int i = 0; i < les.size(); i++) {
+      LightEdge le = les[i];
+      p_src.push_back(float(le.w_sum) / w_total);
+      w_diffuse.push_back(le.factors_sum[DIFFUSE]);
+      w_specular.push_back(le.factors_sum[SPECULAR]);
+      light.push_back(vecF(le.light_sum[0],le.light_sum[1],le.light_sum[2]));
+      pixel.push_back(vecF(le.pixel_sum[0],le.pixel_sum[1],le.pixel_sum[2]));
+    }
+    dst = d;
+  }
+
+  friend std::ostream& operator<<(std::ostream & str, const ProcessedEdges& pe) {
+    for (int i = 0; i < pe.p_src.size(); i++) {
+      if (!pe.p_src[i]) {continue;}
+      
+      str << pe.dst << ",";
+      str << i << ",";
+      str << pe.p_src[i] << ",";
+      str << pe.w_diffuse[i] << ",";
+      str << pe.w_specular[i] << ",";
+      str << pe.light[i][0] << "," << pe.light[i][1] << "," << pe.light[i][2] << ",";
+      str << pe.pixel[i][0] << "," << pe.pixel[i][1] << "," << pe.pixel[i][2] << std::endl;
+    }
+    return str;
+  }
+};
