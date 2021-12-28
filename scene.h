@@ -8,7 +8,7 @@
 #define IM_WIDTH 500
 #define IM_HEIGHT 500
 #define SAMPLE_NUM 100
-#define p_RR .7f
+#define p_RR .9f
 #define BLOCKSIZE 512
 #define NBLOCKS IM_WIDTH * IM_HEIGHT * SAMPLE_NUM / BLOCKSIZE + 1
 
