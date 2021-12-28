@@ -214,7 +214,7 @@ __host__ __device__ struct intersection_t {
     tri = NULL;
   }
 
-  __host__ __device__ operator bool() {return t != INFINITY;}
+  __host__ __device__ operator bool() {return tri != NULL;}
 };
 
 __host__ __device__ struct bbox_t {
@@ -366,7 +366,7 @@ class Object {
       if (abs(denom) < MIN_DOT) {continue;}
       
       t = (ray.p - center).dot(normal) / -denom;
-      if (t < EPSILON || t > intersection.t) {continue;}
+      if (t < EPSILON || t >= intersection.t) {continue;}
 
       point = ray.p + ray.d * t;
       has_int = true;

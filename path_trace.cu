@@ -188,8 +188,8 @@ void renderScene(Scene *scene, vecF values[]) {
     unsigned long long seed = (unsigned long long) time(NULL); 
     renderSample<<<NBLOCKS,BLOCKSIZE>>>(scene,values,seed);
     cudaDeviceSynchronize();
-    //cudaError_t err = cudaGetLastError();
-    //printf("%d\n",err);
+    cudaError_t err = cudaGetLastError();
+    printf("%d\n",err);
 }
 
 int main(int argc, char argv[]) {

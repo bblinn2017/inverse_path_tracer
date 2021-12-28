@@ -87,11 +87,12 @@ class Scene {
     cudaMemcpy(m_emissives,emissives.data(),sizeof(Triangle *)*emissives.size(),cudaMemcpyHostToDevice);
     
     cudaMallocManaged(&m_bvh,sizeof(BVH));
-    *m_bvh = BVH(objects,n);
+    new(m_bvh) BVH(objects,n);
   }
   
   __host__ __device__ ~Scene() {
     cudaFree(m_emissives);
+    cudaFree(m_bvh);
   }
 
   __host__ __device__ void getIntersection(Ray ray, intersection_t &intersect, bool occlusion=false) {

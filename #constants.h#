@@ -1,0 +1,11 @@
+#define EYE {0.,0.,0.}
+#define LOOK {0.,0.,1.}
+#define UP {0.,1.,0.}
+#define HA 90.f
+#define AR 1.f
+#define IM_WIDTH 500
+#define IM_HEIGHT 500
+#define SAMPLE_NUM 100
+#define p_RR .7f
+#define BLOCKSIZE 128
+#define NBLOCKS IM_WIDTH * IM_HEIGHT * SAMPLE_NUM / BLOCKSIZE + 1
