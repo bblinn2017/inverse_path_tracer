@@ -9,18 +9,18 @@
 
 __device__ mat3F BSDF(intersection_t intersect, vecF w, vecF w_i, bool isDirect) {
     
-    mat_t *mat = intersect.tri->material;
+    mat_t mat = intersect.tri->material;
     
-    vecF diffuse = vecF(mat->diffuse[0],mat->diffuse[1],mat->diffuse[2]);
+    vecF diffuse = vecF(mat.diffuse[0],mat.diffuse[1],mat.diffuse[2]);
     if (!isDirect) {
        diffuse /= M_PI;
     }
 
-    float n = mat->shininess;
+    float n = mat.shininess;
     vecF norm = intersect.tri->getNormal(intersect.hit);
     vecF refl = -w_i + 2 * norm.dot(w_i) * norm;
     float coeff = (n+2)/2./M_PI * max(pow(refl.dot(w),n),0.f);
-    vecF specular = vecF(mat->specular[0],mat->specular[1],mat->specular[2]) * coeff;
+    vecF specular = vecF(mat.specular[0],mat.specular[1],mat.specular[2]) * coeff;
         
     mat3F T = mat3F::Zero();
     for (int i = 0; i < 3; i++) {T(i,i) = diffuse[i] + specular[i];}
@@ -32,6 +32,7 @@ __device__ vecF directLighting(Scene *scene, vecF d, intersection_t intersect, c
     Triangle *t_curr = intersect.tri;
     int n_e = scene->nEmissives();
     if (!n_e) {return vecF::Zero();}
+
     Triangle **emissives;
     scene->emissives(emissives);
 
@@ -79,7 +80,7 @@ __device__ vecF directLighting(Scene *scene, vecF d, intersection_t intersect, c
     Triangle *t_int = i.tri;
     if (t_int != t_emm) {return vecF::Zero();}
 
-    real_t *e = t_emm->material->emission;
+    real_t *e = t_emm->material.emission;
     vecF L_o = vecF(e[0],e[1],e[2]);
     
     L_o *= cos_theta * cos_theta_prime / pow(i.t, 2.) / p_t;
@@ -108,17 +109,18 @@ __device__ float sampleNextDir(vecF normDir, bool isSpecular, float shininess, v
 }
 
 __device__ bool radiance(Scene *scene, Ray &ray, vecF &L_e, vecF &L_d, mat3F &multiplier, int recursion, curandState_t &state) {
-    	   
+    
+    
     intersection_t intersect;
-    scene->getIntersection(ray,intersect);    
+    scene->getIntersection(ray,intersect);
     if (!intersect) {return false;}
     
     Triangle *tri = intersect.tri;
-    mat_t *mat = tri->material;
+    mat_t mat = tri->material;
     
     // Emission
     if (recursion == 0) {
-       for (int i = 0; i < 3; i++) {L_e[i] = mat->emission[i];}
+       for (int i = 0; i < 3; i++) {L_e[i] = mat.emission[i];}
     }
 
     // Direct
@@ -127,9 +129,9 @@ __device__ bool radiance(Scene *scene, Ray &ray, vecF &L_e, vecF &L_d, mat3F &mu
     // Indirect
     float pRecur = curand_uniform(&state);
     if (pRecur >= p_RR) {return false;}
-    bool isSpecular = (mat->specular[0] || mat->specular[1] || mat->specular[2]) && mat->shininess;
+    bool isSpecular = (mat.specular[0] || mat.specular[1] || mat.specular[2]) && mat.shininess;
     vecF nextDir;
-    float p_sample = sampleNextDir(tri->normal,isSpecular,mat->shininess,nextDir,state);
+    float p_sample = sampleNextDir(tri->normal,isSpecular,mat.shininess,nextDir,state);
     Ray nextRay = Ray(intersect.hit,nextDir);
     mat3F bsdf = BSDF(intersect,ray.d,nextDir,false);
     float coeff = nextDir.dot(tri->getNormal(intersect.hit)) / p_sample / p_RR;    
@@ -160,9 +162,7 @@ __global__ void renderSample(Scene *scene, vecF values[], unsigned long long see
     vecF d = vecF(x, y, 1);
     d.normalize();
     Ray ray = Ray(p,d);
-    
     ray.transform(scene->getInverseViewMatrix());
-    
     vecF L = vecF::Zero();
 
     vecF L_e = vecF::Zero();
@@ -194,27 +194,30 @@ void renderScene(Scene *scene, vecF values[]) {
 
 int main(int argc, char argv[]) {
 
-    Object *objects;
-    int n = 2;
-    cudaMallocManaged(&objects,sizeof(Object)*n);
-    new(&(objects[0])) Object(shape_type_t::Cornell,
-				vecF(0,0,4),
-                  		vecF(0,0,0),
-                  		vecF(2,2,2));
-    new(&(objects[1])) Object(shape_type_t::Cube,
-				vecF(0,-1.5,4),
-				vecF(0,0,0),
-				vecF(1,1,1)
-    );
+    CameraParams_t cameraParams = CameraParams_t(true);
+    std::vector<ObjParams_t> objParams;
     
-    Camera *camera;
-    cudaMallocManaged(&camera,sizeof(Camera));
-    new(camera) Camera(EYE,LOOK,UP,HA,AR);
-    
+    objParams.push_back(ObjParams_t(
+	shape_type_t::Cornell,
+  	vecF(0,0,4),
+	vecF::Zero(),
+	vecF(2,2,2),
+	"",
+	""
+    ));
+    objParams.push_back(ObjParams_t(
+        shape_type_t::Cube,
+        vecF(0,-1.5,4),
+	vecF::Zero(),
+	vecF(1,1,1),
+	"",
+	""
+    ));
+
     Scene *scene;
     cudaMallocManaged(&scene,sizeof(Scene));
-    new(scene) Scene(camera,objects,n);
-    
+    new(scene) Scene(cameraParams,objParams);
+
     vecF *gpuValues;
     cudaMallocManaged(&gpuValues,sizeof(vecF)*IM_WIDTH*IM_HEIGHT*SAMPLE_NUM);
     renderScene(scene,gpuValues);
@@ -235,7 +238,6 @@ int main(int argc, char argv[]) {
     stbi_write_png("temp.png", IM_WIDTH, IM_HEIGHT, 3, img, IM_WIDTH*3);
 
     cudaFree(gpuValues);
-    cudaFree(objects);
-    cudaFree(camera);
+    scene->~Scene();
     cudaFree(scene);
 }

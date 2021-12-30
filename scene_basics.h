@@ -30,7 +30,7 @@ typedef Eigen::Affine3f aff3F;
 __host__ __device__ vecF CMIN(vecF x, vecF y) {return vecF(min(x[0],y[0]),min(x[1],y[1]),min(x[2],y[2]));}
 __host__ __device__ vecF CMAX(vecF x, vecF y) {return vecF(max(x[0],y[0]),max(x[1],y[1]),max(x[2],y[2]));}
 __host__ __device__ void PRINT(vecF v) {printf("%f %f %f\n",v[0],v[1],v[2]);}
-__host__ __device__ void PRINT(mat3F m) {for (int i = 0; i < 3; i++) {for(int j = 0; j < 3; j++) {printf("%f ",m(i,j));} printf("\n");}}
+__host__ __device__ void PRINT(Eigen::MatrixXf m) {for (int i = 0; i < m.rows(); i++) {for(int j = 0; j < m.cols(); j++) {printf("%f ",m(i,j));} printf("\n");}}
 
 enum shape_type_t {Cube=0,Sphere=1,Cornell=2,Other=3};
 
@@ -59,23 +59,26 @@ struct mat_t {
     copy(&dissolve,&material.dissolve,sizeof(real_t));
     copy(&illum,&material.illum,sizeof(int));
   }
+
+  mat_t() {}
 };
 
 class Triangle {
  public:
   int idx, idxE;
-  mat_t *material;
+  mat_t material;
   vecF vertices[3];
   mat3F normals;
   vecF normal;
   vecF center;
   float area;
 
-  __host__ __device__ Triangle(int i, material_t m, vecF vs[], vecF *ns) {
+  __host__ __device__ Triangle(int i, material_t m, vecF vs[], vecF *ns) 
+    : material(m)
+{
     idx = i;
     idxE = -1;
-    cudaMallocManaged(&material,sizeof(mat_t));
-    new(material) mat_t(m);
+    
     center = vecF::Zero();
     for (int j = 0; j < 3; j++){
       vertices[j] = vs[j];
@@ -95,10 +98,6 @@ class Triangle {
   }
 
   __host__ __device__ Triangle() {}
-
-  __host__ __device__ ~Triangle() {
-    cudaFree(material);
-  }
   
   __host__ __device__ vecF getNormal(vecF point) {
     vecF weights; float weight;
@@ -112,30 +111,78 @@ class Triangle {
   }
 };
 
+struct ObjParams_t{
+
+  shape_type_t shp;
+  vecF pos;
+  vecF ori;
+  vecF scl;
+  char *obj_file;
+  char *mtl_file;
+
+  ObjParams_t(int s, float p[3], float o[3], float sc[3], char *ob, char *m) {
+    shp = (shape_type_t) s;
+    pos = vecF(p[0],p[1],p[2]);
+    ori = vecF(o[0],o[1],o[2]);
+    scl = vecF(sc[0],sc[1],sc[2]);
+    obj_file = ob;
+    mtl_file = m;
+  }
+
+  ObjParams_t(shape_type_t s, vecF p, vecF o, vecF sc, char *ob, char *m) {
+    shp = s;
+    pos = p;
+    ori = o;
+    scl = sc;
+    obj_file = ob;
+    mtl_file = m;
+  }
+
+  ObjParams_t() {}
+};
+
 class Mesh {
  public:
   vecF m_position;
-  //vecF *m_vertices;
-  //vecF *m_normals;
-  //vecI *m_faces;
   Triangle *m_triangles;
   Triangle **m_emissives;
-  float *m_probabilities;
-
+  
   int m_nV,m_nF,m_nT,m_nE;
 
-  Mesh(vecF pos, std::vector<material_t> ms, std::vector<vecF> vs, std::vector<vecF> ns, std::vector<vecI> fs) {
-    m_position = pos;
+  Mesh(ObjParams_t obj) {
+    // Transform
+    aff3F T = aff3F::Identity();
+    // Translate
+    T.translate(obj.pos);
+    // Rotate
+    float angle = obj.ori.norm();
+    obj.ori.normalize();
+    T.rotate(Eigen::AngleAxisf(angle,obj.ori));
+    // Scale
+    T.scale(obj.scl);
+    // Load Mesh
+    switch(obj.shp) {
+    case Cube:
+      obj.obj_file = "/users/bblinn/pt_inv/shapes/cube.obj";
+      break;
+    case Sphere:
+      obj.obj_file = "/users/bblinn/pt_inv/shapes/sphere.obj";
+      break;
+    case Cornell:
+      obj.obj_file = "/users/bblinn/pt_inv/CornellBox/CornellBox-Empty-CO.obj";
+      obj.mtl_file = "/users/bblinn/pt_inv/CornellBox/CornellBox-Empty-CO.mtl";
+    default:
+      break;
+    }
 
-    /*
-    cudaMallocManaged(&m_vertices,sizeof(vecF)*vs.size());
-    cudaMemcpy(m_vertices,vs.data(),sizeof(vecF)*vs.size(),cudaMemcpyHostToDevice);
-    m_nV = vs.size();
+    std::vector<vecF> vs;
+    std::vector<vecF> ns;
+    std::vector<vecI> fs;
+    std::vector<material_t> ms;
 
-    cudaMallocManaged(&m_faces,sizeof(vecI)*fs.size());
-    cudaMemcpy(m_faces,fs.data(),sizeof(vecI)*fs.size(),cudaMemcpyHostToDevice);
-    m_nF = fs.size();
-    */
+    if (!ParseFromString(obj.obj_file,obj.mtl_file,&vs,&ns,&fs,&ms,T)) {exit(1);}
+
+    m_position = obj.pos;
 
     cudaMallocManaged(&m_triangles,sizeof(Triangle)*fs.size());
     std::vector<Triangle *> es;
@@ -151,7 +198,7 @@ class Mesh {
 			  ns[face[2]]};
 	tri_n = normals;
       }
-      new(&(m_triangles[i])) Triangle(i,ms[i],tri_v,tri_n);
+      new(m_triangles+i) Triangle(i,ms[i],tri_v,tri_n);
       real_t *e = ms[i].emission;
       if (e[0] > 0. || e[1] > 0. || e[2] > 0.) {
 	m_triangles[i].idxE = es.size();
@@ -159,18 +206,103 @@ class Mesh {
       }
     }
     m_nT = fs.size();
-
+    
     cudaMallocManaged(&m_emissives,sizeof(Triangle *)*es.size());
     cudaMemcpy(m_emissives,es.data(),sizeof(Triangle *)*es.size(),cudaMemcpyHostToDevice);
     m_nE = es.size();
   }
+
+  Mesh() {}
+  
   ~Mesh() {
-    //cudaFree(m_vertices);
-    //cudaFree(m_faces);
+    for (int i = 0; i < m_nT; i++) {
+      (m_triangles+i)->~Triangle();
+    }
     cudaFree(m_triangles);
     cudaFree(m_emissives);
   }
 
+ private:
+  bool ParseFromString(const std::string &obj_file,
+                       const std::string &mtl_file,
+                       std::vector<vecF> *vertices,
+                       std::vector<vecF> *vert_normals,
+                       std::vector<vecI> *faces,
+                       std::vector<material_t> *face_materials,
+                       aff3F T) {
+
+    std::filebuf obj_fb;
+    if(!obj_fb.open(obj_file,std::ios_base::in)) {
+      printf("Error: Object File was not able to be opened\n");
+      std::cerr << "Error: " << strerror(errno) << std::endl;
+      exit(1);
+    }
+    std::istream obj_ifs(&obj_fb);
+
+    std::filebuf mtl_fb;
+    if(!mtl_fb.open(mtl_file,std::ios::in) && mtl_file != "") {
+      printf("Error: Material File was not able to be opened\n");
+      std::cerr << "Error: " << strerror(errno) << std::endl;
+      exit(1);
+    }
+    std::istream mtl_ifs(&mtl_fb);
+
+    MaterialStreamReader mtl_ss(mtl_ifs);
+
+    attrib_t attrib;
+    std::vector<shape_t> shapes;
+    std::vector<material_t> materials;
+    std::string warning;
+    std::string error;
+
+    bool valid_ = LoadObj(&attrib, &shapes, &materials, &warning, &error, &obj_ifs, &mtl_ss, true, true);
+
+    std::vector<real_t> v_xyz = attrib.vertices;
+    std::vector<real_t> n_xyz = attrib.normals;
+    for (int i = 0; i < v_xyz.size() / 3; i++) {
+      vertices->push_back(T * vecF(v_xyz[3*i],v_xyz[3*i+1],v_xyz[3*i+2]));
+    }
+    mat3F T_2 = T.linear().transpose().inverse();
+    for (int i = 0; i < n_xyz.size() / 3; i++) {
+      vert_normals->push_back(T_2 * vecF(n_xyz[3*i],n_xyz[3*i+1],n_xyz[3*i+2]));
+    }
+
+    std::vector<index_t> f_idx;
+    std::vector<int> mat_ids;
+
+    // Create random mat
+    srand(time(NULL));
+    material_t rand_mat;
+    InitMaterial(&rand_mat);
+    float spec = (real_t) rand() / RAND_MAX;
+    spec = (spec > 0.5) ? spec : 0.f;
+    for (int i = 0; i < 3; i++) {
+      rand_mat.diffuse[i] = (real_t) rand() / RAND_MAX;
+      rand_mat.specular[i] = spec;
+    }
+    rand_mat.shininess = (real_t) rand() / RAND_MAX * 100.f;
+    rand_mat.ior = (real_t) rand() / RAND_MAX;
+
+    for (int i = 0; i < shapes.size(); i++) {
+      f_idx = shapes[i].mesh.indices;
+      mat_ids = shapes[i].mesh.material_ids;
+      for (int j = 0; j < mat_ids.size(); j++) {
+        faces->push_back(vecI(f_idx[3*j].vertex_index,
+                              f_idx[3*j+1].vertex_index,
+                              f_idx[3*j+2].vertex_index));
+        int mat_id = mat_ids[j];
+        material_t mat;
+        if (mat_id != -1) {
+          mat = materials[mat_id];
+        } else {
+          mat = rand_mat;
+        }
+        face_materials->push_back(mat);
+      }
+    }
+
+    return valid_;
+  }
 };
 
 class Ray {
@@ -286,55 +418,14 @@ __host__ __device__ struct bbox_t {
 class Object {
  public:
   
-  __host__ Object(shape_type_t shp,
-		  vecF pos=vecF(0.,0.,2.5),
-		  vecF ori=vecF(0.,0.,0.),
-		  vecF scl=vecF(1.,1.,1.),
-		  std::string obj_file="",
-		  std::string mtl_file="") {
-
-    // Transform 
-    aff3F T = aff3F::Identity();
-    // Translate
-    T.translate(pos);
-    // Rotate
-    float angle = ori.norm();
-    ori.normalize();
-    T.rotate(Eigen::AngleAxisf(angle,ori));
-    // Scale
-    T.scale(scl);
-
-    // Load Mesh                                            
-    switch(shp) {
-    case Cube:
-      obj_file = "/users/bblinn/pt_inv/shapes/cube.obj";
-      break;
-    case Sphere:
-      obj_file = "/users/bblinn/pt_inv/shapes/sphere.obj";
-      break;
-    case Cornell:
-      obj_file = "/users/bblinn/pt_inv/CornellBox/CornellBox-Empty-CO.obj";
-      mtl_file = "/users/bblinn/pt_inv/CornellBox/CornellBox-Empty-CO.mtl";
-    default:
-      break;
-    }
-
-    std::vector<vecF> vertices;
-    std::vector<vecF> normals;
-    std::vector<vecI> faces;
-    std::vector<material_t> materials;
-
-    if (!ParseFromString(obj_file,mtl_file,&vertices,&normals,&faces,&materials,T)) {exit(1);}
-    
+ Object(ObjParams_t obj) : m_mesh(obj) {
     // Set Bounding Box
-    m_bbox.setP(pos);
-    for (int i = 0; i < vertices.size(); i++) {
-       m_bbox.expandToInclude(vertices[i]);
+    m_bbox.setP(obj.pos);
+    for (int i = 0; i < m_mesh.m_nT; i++) {
+      for (int j = 0; j < 3; j++) {
+	m_bbox.expandToInclude(m_mesh.m_triangles[i].vertices[j]);
+      }
     }
-
-    // Create Mesh
-    cudaMallocManaged(&m_mesh,sizeof(Mesh));
-    m_mesh = new(m_mesh) Mesh(pos,materials,vertices,normals,faces);
   };
 
   __host__ __device__ Object() {}
@@ -345,7 +436,7 @@ class Object {
   }
 
   __host__ __device__ vecF getPosition() {
-    return vecF(m_mesh->m_position);
+    return vecF(m_mesh.m_position);
   }
 
   __host__ __device__ void getIntersection(Ray ray, intersection_t &intersection) {
@@ -354,10 +445,10 @@ class Object {
     vecF normal, center, point;
     Triangle *tri;
     bool has_int;
-    int nT = m_mesh->m_nT;
+    int nT = m_mesh.m_nT;
     
     for (int i = 0; i < nT; i++) {
-      tri = &(m_mesh->m_triangles[i]);
+      tri = &(m_mesh.m_triangles[i]);
 
       center = tri->center;
       normal = tri->normal;
@@ -381,106 +472,26 @@ class Object {
       intersection.hit = point;
       intersection.tri = tri;
     }
-    
   }
 
-  __host__ __device__ Triangle** getEmissives() {return m_mesh->m_emissives;}
+  __host__ __device__ Triangle** getEmissives() {return m_mesh.m_emissives;}
 
-  __host__ __device__ int nEmissives() {return m_mesh->m_nE;}
+  __host__ __device__ int nEmissives() {return m_mesh.m_nE;}
 
-  __host__ __device__ int nTriangles() {return m_mesh->m_nT;}
+  __host__ __device__ int nTriangles() {return m_mesh.m_nT;}
 
-  __host__ __device__ void setOffsets(int currT, int currE) {
-    for (int i = 0; i < m_mesh->m_nT; i++) {
-      m_mesh->m_triangles[i].idx += currT;
+  void setOffsets(int currT, int currE) {
+    for (int i = 0; i < m_mesh.m_nT; i++) {
+      m_mesh.m_triangles[i].idx += currT;
     }
-    for (int i = 0; i < m_mesh->m_nE; i++) {
-      m_mesh->m_emissives[i]->idxE += currE;
+    for (int i = 0; i < m_mesh.m_nE; i++) {
+      m_mesh.m_emissives[i]->idxE += currE;
     }
   }
 
  private:
-  Mesh *m_mesh;
+  Mesh m_mesh;
   bbox_t m_bbox;
-
-  bool ParseFromString(const std::string &obj_file,
-		       const std::string &mtl_file,
-		       std::vector<vecF> *vertices,
-		       std::vector<vecF> *vert_normals,
-		       std::vector<vecI> *faces,
-		       std::vector<material_t> *face_materials,
-		       aff3F T) {
-
-    std::filebuf obj_fb;
-    if(!obj_fb.open(obj_file,std::ios::in)) {
-      printf("Error: Object File was not able to be opened\n");
-      exit(1);
-    }
-    std::istream obj_ifs(&obj_fb);
-    
-    std::filebuf mtl_fb;
-    if(!mtl_fb.open(mtl_file,std::ios::in) && mtl_file != "") {
-      printf("Error: Material File was not able to be opened\n");
-      exit(1);
-    }
-    std::istream mtl_ifs(&mtl_fb);
-
-    MaterialStreamReader mtl_ss(mtl_ifs);
-
-    attrib_t attrib;
-    std::vector<shape_t> shapes;
-    std::vector<material_t> materials;
-    std::string warning;
-    std::string error;
-
-    bool valid_ = LoadObj(&attrib, &shapes, &materials, &warning, &error, &obj_ifs, &mtl_ss, true, true);
-    
-    std::vector<real_t> v_xyz = attrib.vertices;
-    std::vector<real_t> n_xyz = attrib.normals;
-    for (int i = 0; i < v_xyz.size() / 3; i++) {
-      vertices->push_back(T * vecF(v_xyz[3*i],v_xyz[3*i+1],v_xyz[3*i+2]));
-    }
-    mat3F T_2 = T.linear().transpose().inverse();
-    for (int i = 0; i < n_xyz.size() / 3; i++) {
-      vert_normals->push_back(T_2 * vecF(n_xyz[3*i],n_xyz[3*i+1],n_xyz[3*i+2]));
-    }
-
-    std::vector<index_t> f_idx;
-    std::vector<int> mat_ids;
-
-    // Create random mat
-    srand(time(NULL));
-    material_t rand_mat;
-    InitMaterial(&rand_mat);
-    float spec = (real_t) rand() / RAND_MAX;
-    spec = (spec > 0.5) ? spec : 0.f;
-    for (int i = 0; i < 3; i++) {
-      rand_mat.diffuse[i] = (real_t) rand() / RAND_MAX; 
-      rand_mat.specular[i] = spec;
-    }
-    rand_mat.shininess = (real_t) rand() / RAND_MAX * 100.f; 
-    rand_mat.ior = (real_t) rand() / RAND_MAX;
-    
-    for (int i = 0; i < shapes.size(); i++) {
-      f_idx = shapes[i].mesh.indices;
-      mat_ids = shapes[i].mesh.material_ids;
-      for (int j = 0; j < mat_ids.size(); j++) {
-	faces->push_back(vecI(f_idx[3*j].vertex_index,
-			      f_idx[3*j+1].vertex_index,
-			      f_idx[3*j+2].vertex_index));
-	int mat_id = mat_ids[j];
-	material_t mat;
-	if (mat_id != -1) {
-	  mat = materials[mat_id];
-	} else {
-	  mat = rand_mat;
-	}
-	face_materials->push_back(mat);
-      }
-    }
-    
-    return valid_;
-  }
 
   __host__ __device__ float signedDistance(vecF point, vecF s0, vecF s1, vecF normal) {
     

@@ -48,7 +48,6 @@ struct LightEdge {
   }
 
   __host__ __device__ void normalize() {
-    float weight = (w_sum) ? w_sum : 1.;
     for (int j = 0; j < 2; j++) {
       for (int i = 0; i < 3; i++) {
 	pixel_sum[j][i] /= factors_sum[j];
@@ -58,49 +57,38 @@ struct LightEdge {
   }
 };
 
-struct ProcessedEdges {
+struct Graph {
 
-  int dst;
   std::vector<float> p_src;
-  std::vector<vecF> d_light;
-  std::vector<vecF> d_pixel;
-  std::vector<vecF> s_light;
-  std::vector<vecF> s_pixel;
+  std::vector<float> d_light;
+  std::vector<float> d_pixel;
+  std::vector<float> s_light;
+  std::vector<float> s_pixel;
   
-  ProcessedEdges() {}
+  Graph() {}
 
-  ProcessedEdges(int d, std::vector<LightEdge> les) {
-    float w_total = 0.;
-    for (int i = 0; i < les.size(); i++) {
-      if (!(i == dst)) {w_total+= les[i].w_sum;}
-    }
-    w_total = (w_total) ? w_total : 1.;
-    for (int i = 0; i < les.size(); i++) {
-      LightEdge le = les[i];
-      le.normalize();
-      float p_s = float(le.w_sum) / w_total;
-      
-      p_src.push_back(p_s);
-      d_light.push_back(vecF(le.light_sum[DIFFUSE][0],le.light_sum[DIFFUSE][1],le.light_sum[DIFFUSE][2]));
-      d_pixel.push_back(vecF(le.pixel_sum[DIFFUSE][0],le.pixel_sum[DIFFUSE][1],le.pixel_sum[DIFFUSE][2]));
-      s_light.push_back(vecF(le.light_sum[SPECULAR][0],le.light_sum[SPECULAR][1],le.light_sum[SPECULAR][2]));
-      s_pixel.push_back(vecF(le.pixel_sum[SPECULAR][0],le.pixel_sum[SPECULAR][1],le.pixel_sum[SPECULAR][2]));
-    }
-    dst = d;
-  }
+  Graph(LightEdge les[], int nT) {
+    float w_total;
+    for (int dst = 0; dst < nT; dst++) {
+      w_total = 0.;
+      for (int src = 0; src < nT; src++) {
+	if (!(src == dst)) {w_total += les[dst*nT + src].w_sum;}
+      }
+      w_total = (w_total != 0.) ? w_total : 1.;
+      for (int src = 0; src < nT; src++) {
+	LightEdge le = les[dst*nT + src];
+	le.normalize();
 
-  friend std::ostream& operator<<(std::ostream & str, const ProcessedEdges& pe) {
-    for (int i = 0; i < pe.p_src.size(); i++) {
-      if (pe.p_src[i] < P_MIN || i == pe.dst) {continue;}
-      
-      str << pe.dst << ",";
-      str << i << ",";
-      str << pe.p_src[i] << ",";
-      str << pe.d_light[i][0] << "," << pe.d_light[i][1] << "," << pe.d_light[i][2] << ",";
-      str << pe.d_pixel[i][0] << "," << pe.d_pixel[i][1] << "," << pe.d_pixel[i][2] << ",";
-      str << pe.s_light[i][0] << "," << pe.s_light[i][1] << "," << pe.s_light[i][2] << ",";
-      str << pe.s_pixel[i][0] << "," << pe.s_pixel[i][1] << "," << pe.s_pixel[i][2] << std::endl;
+	float p_s = float(le.w_sum) / w_total;
+	p_src.push_back(p_s);
+
+	for (int i = 0; i < 3; i++) {
+	  d_light.push_back(le.light_sum[DIFFUSE][i]);
+	  d_pixel.push_back(le.pixel_sum[DIFFUSE][i]);
+	  s_light.push_back(le.light_sum[SPECULAR][i]);
+	  s_pixel.push_back(le.pixel_sum[SPECULAR][i]);
+	}
+      }
     }
-    return str;
   }
 };

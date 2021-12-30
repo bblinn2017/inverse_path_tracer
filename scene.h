@@ -9,20 +9,42 @@
 #define IM_HEIGHT 500
 #define SAMPLE_NUM 100
 #define p_RR .9f
-#define BLOCKSIZE 512
+#define BLOCKSIZE 256
 #define NBLOCKS IM_WIDTH * IM_HEIGHT * SAMPLE_NUM / BLOCKSIZE + 1
+
+struct CameraParams_t {
+  float eye[3];
+  float look[3];
+  float up[3];
+  float heightAngle;
+  float aspectRatio;
+
+  CameraParams_t(bool isDefault=false) {
+    if (isDefault) {
+      for (int i = 0; i < 3; i++) {
+	eye[i] = EYE[i];
+	look[i] = LOOK[i];
+	up[i] = UP[i];
+      }
+      heightAngle = HA;
+      aspectRatio = AR;
+    }
+  }
+};
 
 class Camera {
  public:
-  __host__ __device__ Camera(vecF p, vecF d, vecF u,float ha,float ar) {
-    m_position = vecF(p[0],p[1],p[2]);
-    m_direction = vecF(d[0],d[1],d[2]);
+  Camera(CameraParams_t camera) {
+    m_position = vecF(camera.eye[0],camera.eye[1],camera.eye[2]);
+    m_direction = vecF(camera.look[0],camera.look[1],camera.look[2]);
     m_direction.normalize();
-    m_up = vecF(u[0],u[1],u[2]);
+    m_up = vecF(camera.up[0],camera.up[1],camera.up[2]);
     m_up.normalize();
-    m_heightAngle = M_PI * ha / 360.f;
-    m_aspectRatio = ar;
+    m_heightAngle = M_PI * camera.heightAngle / 360.f;
+    m_aspectRatio = camera.aspectRatio;
   }
+
+  Camera() {}
 
   __host__ __device__ mat4F getViewMatrix() {
 
@@ -64,43 +86,50 @@ class Camera {
 class Scene {
  public:
   
-  __host__ __device__ Scene(Camera * camera, Object *objects, int n) {
-    m_camera = camera;
-    m_objects = objects;
-    m_nO = n;
+ Scene(CameraParams_t camera, std::vector<ObjParams_t> objects) : m_camera(camera) {
+    
+    m_nO = objects.size();
+    cudaMallocManaged(&m_objects,sizeof(Object)*m_nO);
+    for (int i = 0; i < m_nO; i++) {
+      new(&(m_objects[i])) Object(objects[i]);
+    }
+    
     m_nT = 0;
+    m_nE = 0;
 
     std::vector<Triangle *> emissives;
-    for (int i = 0; i < n; i++) {
-      Object o = m_objects[i];
+    for (int i = 0; i < m_nO; i++) {
+      Object *o = m_objects+i;
 
-      o.setOffsets(m_nT,m_nE);
-
-      Triangle **o_emissives = o.getEmissives();
-      for (int j = 0; j < o.nEmissives(); j++) {
+      o->setOffsets(m_nT,m_nE);
+      
+      Triangle **o_emissives = o->getEmissives();
+      for (int j = 0; j < o->nEmissives(); j++) {
 	emissives.push_back(o_emissives[j]);
       }
-      m_nT += o.nTriangles();
-      m_nE += o.nEmissives();
+      m_nT += o->nTriangles();
+      m_nE += o->nEmissives();
     }
     cudaMalloc(&m_emissives,sizeof(Triangle *)*emissives.size());
     cudaMemcpy(m_emissives,emissives.data(),sizeof(Triangle *)*emissives.size(),cudaMemcpyHostToDevice);
     
-    cudaMallocManaged(&m_bvh,sizeof(BVH));
-    new(m_bvh) BVH(objects,n);
+    m_bvh.build(m_objects,m_nO);
   }
   
-  __host__ __device__ ~Scene() {
+  ~Scene() {
+    for (int i = 0; i < m_nO; i++) {
+      (m_objects+i)->~Object();
+    }
+    cudaFree(m_objects);
     cudaFree(m_emissives);
-    cudaFree(m_bvh);
   }
 
   __host__ __device__ void getIntersection(Ray ray, intersection_t &intersect, bool occlusion=false) {
-    return m_bvh->getIntersection(ray,intersect,occlusion);
+    return m_bvh.getIntersection(ray,intersect,occlusion);
   }
 
   __host__ __device__ mat4F getInverseViewMatrix() {
-    return m_camera->getInverseViewMatrix();
+    return m_camera.getInverseViewMatrix();
   }
 
   __host__ __device__ void emissives(Triangle ** &emissives) {
@@ -115,9 +144,9 @@ class Scene {
  
  private:
   Triangle **m_emissives;
-  Camera *m_camera;
+  Camera m_camera;
   Object *m_objects;
-  BVH *m_bvh;
+  BVH m_bvh;
   
   int m_nO;
   int m_nE;

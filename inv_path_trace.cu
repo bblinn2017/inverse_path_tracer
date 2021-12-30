@@ -64,7 +64,7 @@ __device__ void directLighting(Scene *scene, Image *image, vecF d, intersection_
     Triangle *t_int = i.tri;
     if (t_int != t_emm) {return;}
 
-    real_t *e = t_emm->material->emission;
+    real_t *e = t_emm->material.emission;
     vecF L_o = vecF(e[0],e[1],e[2]);
 
     int curr = blockIdx.x * blockDim.x + threadIdx.x;
@@ -80,7 +80,7 @@ __device__ void directLighting(Scene *scene, Image *image, vecF d, intersection_
     
     int src = emissives[t_emm->idxE]->idx;
     int dst = t_curr->idx;
-    int le_i = src * scene->nTriangles() + dst;
+    int le_i = dst * scene->nTriangles() + src;
     lightEdges[le_i].update(weight,pixel,light,factors);
     
     return;
@@ -113,14 +113,14 @@ __device__ int radiance(Scene *scene, int dst, Image *image, Ray &ray, LightEdge
     if (!intersect) {return -1;}
 
     Triangle *tri = intersect.tri;
-    mat_t *mat = tri->material;
-    bool isSpecular = curand_uniform(&state) < P_SPEC;
-    float shininess = curand_uniform(&state);
+    mat_t mat = tri->material;
+    bool isSpecular = false;//curand_uniform(&state) < P_SPEC;
+    float shininess = 0.;//curand_uniform(&state);
 
     int src = tri->idx;
     int nT = scene->nTriangles();
     if (dst != nT) {    
-       int le_i = src * nT + dst;
+       int le_i = dst * nT + src;
        
        int curr = blockIdx.x * blockDim.x + threadIdx.x;
        int r = curr / SAMPLE_NUM / IM_WIDTH;
@@ -192,44 +192,54 @@ void renderScene(Scene *scene, Image *image, LightEdge lightEdges[]) {
     unsigned long long seed = (unsigned long long) time(NULL); 
     renderSample<<<NBLOCKS,BLOCKSIZE>>>(scene,image,lightEdges,seed);
     cudaDeviceSynchronize();
-    cudaError_t err = cudaGetLastError();
-    printf("%d\n",err);
+    //cudaError_t err = cudaGetLastError();
+    //printf("%d\n",err);
 }
 
-std::vector<ProcessedEdges> processEdges(Scene *scene, LightEdge lightEdges[]) {
-    
-    int nT = scene->nTriangles();
-    std::vector<ProcessedEdges> allEdges(nT);
+extern "C" {
 
-    std::ofstream file;
-    file.open("temp.csv");    
-    file << "dst,src,c_src,dl_r,dl_g,dl_b,dp_r,dp_g,dp_b,sl_r,sl_g,sl_b,sp_r,sp_g,sp_b" << std::endl;
-    for (int dst = 0; dst < nT; dst++) {
-    	std::vector<LightEdge> dstEdges(nT);
-    	for (int src = 0; src < nT; src++) {
-	    dstEdges[src] = lightEdges[src*nT + dst];
-	}
-	ProcessedEdges pE = ProcessedEdges(dst,dstEdges);
-	file << pE;
-    }
-    file.close();
+int loadScene(int *shps, float **poss, float **oris, float **scls, char **obj_fs, char **mtl_fs, int n, void **scenePtr) {
 
-    return allEdges;
-}
+     CameraParams_t camParams(true);
 
-extern "C"
-void loadScene(char **obj_files, char **mtl_files, int n) {
-     std::vector<std::string> obj_fs;
-     std::vector<std::string> mtl_fs;
+     std::vector<ObjParams_t> objParams(n);
      for (int i = 0; i < n; i++) {
-     	 obj_fs.push_back(obj_files[i]);
-	 mtl_fs.push_back(mtl_files[i]);
+     	 ObjParams_t op(shps[i],poss[i],oris[i],scls[i],obj_fs[i],mtl_fs[i]);
+	 objParams[i] = op;
      }
-
+     
      Scene *scene;
      cudaMallocManaged(&scene,sizeof(Scene));
-     new(scene) Scene(obj_files,mtl_files,n);
+     new(scene) Scene(camParams,objParams);
+     *scenePtr = scene;     
+
+     return scene->nTriangles();
 }
+
+void createGraph(void *scenePtr, float *graph_weights) {
+    Scene *scene = (Scene *) scenePtr;
+    
+    Image *image;
+    cudaMallocManaged(&image,sizeof(Image));
+    new(image) Image("/users/bblinn/pt_inv/temp.png");
+
+    int nT = scene->nTriangles();
+    int nLE = nT * nT;
+    LightEdge *lightEdges;
+    cudaMallocManaged(&lightEdges,sizeof(LightEdge)*nLE);
+    new(lightEdges) LightEdge[nLE];
+
+    renderScene(scene,image,lightEdges);
+    Graph graph = Graph(lightEdges,nT);
+    memcpy(graph_weights,graph.p_src.data(),sizeof(float)*nLE);
+
+    cudaFree(image);
+    cudaFree(lightEdges);
+    scene->~Scene();
+    cudaFree(scene);
+}
+
+};
 /*
 int main(int argc, char argv[]) {
     
@@ -239,12 +249,12 @@ int main(int argc, char argv[]) {
     new(&(objects[0])) Object(shape_type_t::Cornell,
                                 vecF(0,0,4),
                                 vecF(0,0,0),
-                                vecF(2,2,2));/*
+                                vecF(2,2,2));
     new(&(objects[1])) Object(shape_type_t::Cube,
                                 vecF(0,-1.5,4),
                                 vecF(0,0,0),
                                 vecF(1,1,1)
-    );*/
+    );
     Camera *camera;
     cudaMallocManaged(&camera,sizeof(Camera));
     new(camera) Camera(EYE,LOOK,UP,HA,AR);

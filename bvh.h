@@ -23,16 +23,12 @@ __host__ __device__ struct traversal_t {
 
 class BVH {
  public:
-  __host__ __device__ BVH(Object *objects, int n, int leafSize=4) {
+  __host__ __device__ BVH(int leafSize=4) {
     m_leafSize = leafSize;
 
     m_nNodes = 0;
     m_nLeafs = 0;
-
-    build(objects,n);
   }
-
-  __host__ __device__ BVH() {}
 
   ~BVH() {
     cudaFree(m_flatTree);
@@ -53,7 +49,7 @@ class BVH {
     int ni, closer, other;
     float near, min0, max0, min1, max1, maxCloser, maxOther;
     flatNode_t node, n0, n1;
-    Object obj;
+    Object *obj;
     bool hitc0, hitc1, less;
 
     while (stackptr >= 0) {
@@ -68,9 +64,9 @@ class BVH {
       
       if (!node.rightOffset) {
         for (int o = 0; o < node.nPrims; o++) {
-          obj = m_objects[node.start+o];
+          obj = m_objects + node.start + o;
 	  intersection_t curr;
-          obj.getIntersection(ray,curr);
+          obj->getIntersection(ray,curr);
 	  
           if (curr) {
 
@@ -109,17 +105,6 @@ class BVH {
       }
     }
   }
-  
- private:
-  Object *m_objects;
-  int m_leafSize;
-  
-  int m_nNodes;
-  int m_nLeafs;
-
-  int m_nO;
-
-  flatNode_t *m_flatTree;
 
   void build(Object *objects, int n) {
     m_nO = n;
@@ -218,5 +203,16 @@ class BVH {
     cudaMallocManaged(&m_flatTree,sizeof(flatNode_t)*m_nNodes);
     cudaMemcpy(m_flatTree,buildnodes.data(),sizeof(flatNode_t)*m_nNodes,cudaMemcpyHostToDevice);
   }
+
+ private:
+  Object *m_objects;
+  int m_leafSize;
+
+  int m_nNodes;
+  int m_nLeafs;
+
+  int m_nO;
+
+  flatNode_t *m_flatTree;
 
 };
