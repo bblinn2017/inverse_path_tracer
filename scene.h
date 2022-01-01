@@ -152,3 +152,31 @@ class Scene {
   int m_nE;
   int m_nT;
 };
+
+extern "C" {
+
+  int loadScene(int *shps, float **poss, float **oris, float **scls, char **obj_fs, char **mtl_fs, int n, void **scenePtr) {
+
+    CameraParams_t camParams(true);
+    
+    std::vector<ObjParams_t> objParams(n);
+    for (int i = 0; i < n; i++) {
+      ObjParams_t op(shps[i],poss[i],oris[i],scls[i],obj_fs[i],mtl_fs[i]);
+      objParams[i] = op;
+    }
+    
+    Scene *scene;
+    cudaMallocManaged(&scene,sizeof(Scene));
+    new(scene) Scene(camParams,objParams);
+    *scenePtr = scene;
+    
+    return scene->nTriangles();
+  }
+
+  void freeScene(void *scenePtr) {
+    Scene *scene = (Scene *) scenePtr;
+    scene->~Scene();
+    cudaFree(scene);
+  }
+
+};

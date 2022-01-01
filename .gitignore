@@ -5,4 +5,5 @@ __pycache__
 eigen*
 include/
 build/
+imgs/
 stb*

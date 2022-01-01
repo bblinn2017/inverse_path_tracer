@@ -274,7 +274,7 @@ class Mesh {
     srand(time(NULL));
     material_t rand_mat;
     InitMaterial(&rand_mat);
-    float spec = (real_t) rand() / RAND_MAX;
+    float spec = 0.f;//(real_t) rand() / RAND_MAX;
     spec = (spec > 0.5) ? spec : 0.f;
     for (int i = 0; i < 3; i++) {
       rand_mat.diffuse[i] = (real_t) rand() / RAND_MAX;

@@ -13,7 +13,7 @@ __device__ void BSDF(intersection_t intersect, vecF w, vecF w_i, bool isSpecular
     factors[PTYPE::SPECULAR] = (isSpecular) ? specCoeff / P_SPEC : 0.;
 }
 
-__device__ void directLighting(Scene *scene, Image *image, vecF d, intersection_t intersect, LightEdge *lightEdges, bool isSpecular, float shininess, float prev_weight, curandState_t &state) {
+__device__ void directLighting(Scene *scene, DataWrapper *dw, vecF d, intersection_t intersect, bool isSpecular, float shininess, float prev_weight, curandState_t &state) {
 
     Triangle *t_curr = intersect.tri;
     Triangle **emissives; int n_e = scene->nEmissives();
@@ -74,14 +74,13 @@ __device__ void directLighting(Scene *scene, Image *image, vecF d, intersection_
     // Update LightEdge
     float weight = prev_weight * cos_theta * cos_theta_prime / pow(i.t, 2.) / p_t;
     vecF light = L_o;
-    vecF pixel = image->getValue(r,c);
+    vecF pixel = dw->getPixel(r,c);
     float factors[2]; 
     BSDF(intersect, d, toLight, isSpecular, shininess, true, factors);
     
     int src = emissives[t_emm->idxE]->idx;
     int dst = t_curr->idx;
-    int le_i = dst * scene->nTriangles() + src;
-    lightEdges[le_i].update(weight,pixel,light,factors);
+    dw->update(dst,src,weight,pixel,light,factors);
     
     return;
 }
@@ -106,7 +105,7 @@ __device__ float sampleNextDir(vecF normDir, bool isSpecular, float shininess, v
     return isSpecular ? pow((shininess+1) * cos(theta), shininess) : 1. / M_PI;
 }
 
-__device__ int radiance(Scene *scene, int dst, Image *image, Ray &ray, LightEdge *lightEdges, int recursion, float &prev_weight, float *prev_factors, curandState_t &state) {
+__device__ int radiance(Scene *scene, DataWrapper *dw, int dst, Ray &ray, int recursion, float &prev_weight, float *prev_factors, curandState_t &state) {
    	 
     intersection_t intersect;
     scene->getIntersection(ray,intersect);
@@ -116,25 +115,19 @@ __device__ int radiance(Scene *scene, int dst, Image *image, Ray &ray, LightEdge
     mat_t mat = tri->material;
     bool isSpecular = false;//curand_uniform(&state) < P_SPEC;
     float shininess = 0.;//curand_uniform(&state);
-
+    
+    // Indirect Lighting from previous iteration
     int src = tri->idx;
-    int nT = scene->nTriangles();
-    if (dst != nT) {    
-       int le_i = dst * nT + src;
-       
-       int curr = blockIdx.x * blockDim.x + threadIdx.x;
-       int r = curr / SAMPLE_NUM / IM_WIDTH;
-       int c = (curr / SAMPLE_NUM) % IM_WIDTH;
+    
+    int curr = blockIdx.x * blockDim.x + threadIdx.x;
+    int r = curr / SAMPLE_NUM / IM_WIDTH;
+    int c = (curr / SAMPLE_NUM) % IM_WIDTH;
+    vecF pixel = dw->getPixel(r,c);
 
-       vecF pixel = image->getValue(r,c);
-       lightEdges[le_i].update(prev_weight,pixel,vecF::Zero(),prev_factors);
-    }    
-
-    // Emission
-    // Not factoring in recursion 0 emitted light yet    
-        
+    dw->update(dst,src,prev_weight,pixel,vecF::Zero(),prev_factors);        
+            
     // Direct
-    directLighting(scene, image, ray.d, intersect, lightEdges, isSpecular, shininess, prev_weight, state);
+    directLighting(scene, dw, ray.d, intersect, isSpecular, shininess, prev_weight, state);
     
     // Indirect
     float pRecur = curand_uniform(&state);
@@ -155,7 +148,7 @@ __device__ int radiance(Scene *scene, int dst, Image *image, Ray &ray, LightEdge
     return src;
 }
 
-__global__ void renderSample(Scene *scene, Image *image, LightEdge lightEdges[], unsigned long long seed) {
+__global__ void renderSample(Scene *scene, DataWrapper *dw, unsigned long long seed) {
 
     int curr = blockIdx.x * blockDim.x + threadIdx.x;
     if (curr >= IM_WIDTH * IM_HEIGHT * SAMPLE_NUM) {return;}
@@ -182,15 +175,15 @@ __global__ void renderSample(Scene *scene, Image *image, LightEdge lightEdges[],
     int recursion = 0; 
     int dst = scene->nTriangles();
     while (dst != -1) {
-    	  dst = radiance(scene, dst, image, ray, lightEdges, recursion, weight, factors, state);
+    	  dst = radiance(scene, dw, dst, ray, recursion, weight, factors, state);
 	  recursion++;
     }
 }
 
-void renderScene(Scene *scene, Image *image, LightEdge lightEdges[]) {
+void renderScene(Scene *scene, DataWrapper *dw) {
     // Render Scene
     unsigned long long seed = (unsigned long long) time(NULL); 
-    renderSample<<<NBLOCKS,BLOCKSIZE>>>(scene,image,lightEdges,seed);
+    renderSample<<<NBLOCKS,BLOCKSIZE>>>(scene,dw,seed);
     cudaDeviceSynchronize();
     //cudaError_t err = cudaGetLastError();
     //printf("%d\n",err);
@@ -198,86 +191,19 @@ void renderScene(Scene *scene, Image *image, LightEdge lightEdges[]) {
 
 extern "C" {
 
-int loadScene(int *shps, float **poss, float **oris, float **scls, char **obj_fs, char **mtl_fs, int n, void **scenePtr) {
-
-     CameraParams_t camParams(true);
-
-     std::vector<ObjParams_t> objParams(n);
-     for (int i = 0; i < n; i++) {
-     	 ObjParams_t op(shps[i],poss[i],oris[i],scls[i],obj_fs[i],mtl_fs[i]);
-	 objParams[i] = op;
-     }
-     
-     Scene *scene;
-     cudaMallocManaged(&scene,sizeof(Scene));
-     new(scene) Scene(camParams,objParams);
-     *scenePtr = scene;     
-
-     return scene->nTriangles();
-}
-
-void createGraph(void *scenePtr, float *graph_weights) {
+void createGraph(void *scenePtr, float *data) {
     Scene *scene = (Scene *) scenePtr;
+
+    DataWrapper *dw;
+    cudaMallocManaged(&dw,sizeof(DataWrapper));
+    new(dw) DataWrapper("/users/bblinn/pt_inv/temp.png",scene->nTriangles());
     
-    Image *image;
-    cudaMallocManaged(&image,sizeof(Image));
-    new(image) Image("/users/bblinn/pt_inv/temp.png");
+    renderScene(scene,dw);
+    std::vector<float> compressed = dw->compress();
+    memcpy(data,compressed.data(),sizeof(float)*compressed.size());
 
-    int nT = scene->nTriangles();
-    int nLE = nT * nT;
-    LightEdge *lightEdges;
-    cudaMallocManaged(&lightEdges,sizeof(LightEdge)*nLE);
-    new(lightEdges) LightEdge[nLE];
-
-    renderScene(scene,image,lightEdges);
-    Graph graph = Graph(lightEdges,nT);
-    memcpy(graph_weights,graph.p_src.data(),sizeof(float)*nLE);
-
-    cudaFree(image);
-    cudaFree(lightEdges);
     scene->~Scene();
     cudaFree(scene);
 }
 
 };
-/*
-int main(int argc, char argv[]) {
-    
-    Object *objects;
-    int n = 1;
-    cudaMallocManaged(&objects,sizeof(Object)*n);
-    new(&(objects[0])) Object(shape_type_t::Cornell,
-                                vecF(0,0,4),
-                                vecF(0,0,0),
-                                vecF(2,2,2));
-    new(&(objects[1])) Object(shape_type_t::Cube,
-                                vecF(0,-1.5,4),
-                                vecF(0,0,0),
-                                vecF(1,1,1)
-    );
-    Camera *camera;
-    cudaMallocManaged(&camera,sizeof(Camera));
-    new(camera) Camera(EYE,LOOK,UP,HA,AR);
-    
-    Image *image;
-    cudaMallocManaged(&image,sizeof(Image));
-    new(image) Image("/users/bblinn/pt_inv/temp.png");
-    
-    Scene *scene;
-    cudaMallocManaged(&scene,sizeof(Scene));
-    new(scene) Scene(camera,objects,n);
-
-    LightEdge *lightEdges;
-    int nT = scene->nTriangles();
-    int nLE = nT * nT;
-    cudaMallocManaged(&lightEdges,sizeof(LightEdge)*nLE);
-    new(lightEdges) LightEdge[nLE];
-
-    renderScene(scene,image,lightEdges);
-    std::vector<ProcessedEdges> procEdges = processEdges(scene,lightEdges);
-
-    cudaFree(lightEdges);
-    cudaFree(objects);
-    cudaFree(camera);
-    cudaFree(scene);
-}*/

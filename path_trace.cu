@@ -183,61 +183,54 @@ __global__ void renderSample(Scene *scene, vecF values[], unsigned long long see
     values[curr] = L;
 }
 
-void renderScene(Scene *scene, vecF values[]) {
-    // Render Scene
-    unsigned long long seed = (unsigned long long) time(NULL); 
-    renderSample<<<NBLOCKS,BLOCKSIZE>>>(scene,values,seed);
-    cudaDeviceSynchronize();
-    cudaError_t err = cudaGetLastError();
-    printf("%d\n",err);
+__global__ void toneMap(vecF src[], u_int8_t dst[]) {
+    int curr = blockIdx.x * blockDim.x + threadIdx.x;
+    if (curr >= IM_WIDTH * IM_HEIGHT) {return;}
+
+    vecF totalPixel = vecF::Zero();
+    for (int i = 0; i < SAMPLE_NUM; i++) {
+    	totalPixel += src[curr*SAMPLE_NUM + i] / (float) SAMPLE_NUM;
+    }
+
+    for (int i = 0; i < 3; i++) {
+    	dst[3*curr+i] = (uint8_t)(255.f * totalPixel[i] / (1 + totalPixel[i]));
+    }
 }
 
-int main(int argc, char argv[]) {
-
-    CameraParams_t cameraParams = CameraParams_t(true);
-    std::vector<ObjParams_t> objParams;
-    
-    objParams.push_back(ObjParams_t(
-	shape_type_t::Cornell,
-  	vecF(0,0,4),
-	vecF::Zero(),
-	vecF(2,2,2),
-	"",
-	""
-    ));
-    objParams.push_back(ObjParams_t(
-        shape_type_t::Cube,
-        vecF(0,-1.5,4),
-	vecF::Zero(),
-	vecF(1,1,1),
-	"",
-	""
-    ));
-
-    Scene *scene;
-    cudaMallocManaged(&scene,sizeof(Scene));
-    new(scene) Scene(cameraParams,objParams);
-
+void renderScene(Scene *scene, u_int8_t values[]) {
+    // Allocate Image
     vecF *gpuValues;
     cudaMallocManaged(&gpuValues,sizeof(vecF)*IM_WIDTH*IM_HEIGHT*SAMPLE_NUM);
-    renderScene(scene,gpuValues);
-    vecF values[IM_WIDTH*IM_HEIGHT*SAMPLE_NUM];
-    cudaMemcpy(values,gpuValues,sizeof(vecF)*IM_WIDTH*IM_HEIGHT*SAMPLE_NUM,cudaMemcpyDeviceToHost);
 
-    unsigned char img[IM_WIDTH*IM_HEIGHT][3];
-    for (int i = 0; i < IM_WIDTH*IM_HEIGHT; i++) {
-    	vecF curr = vecF::Zero();
-    	for (int j = 0; j < SAMPLE_NUM; j++) {
-	    curr += values[i*SAMPLE_NUM + j] / (float) SAMPLE_NUM;
-	}
-	for (int j = 0; j < 3; j++) {
-	    uint8_t val = (uint8_t)(255.f * curr[j] / (1 + curr[j]));
-	    img[i][j] = val;
-	}
-    }
-    stbi_write_png("temp.png", IM_WIDTH, IM_HEIGHT, 3, img, IM_WIDTH*3);
+    // Render Scene
+    unsigned long long seed = (unsigned long long) time(NULL); 
+    renderSample<<<NBLOCKS,BLOCKSIZE>>>(scene,gpuValues,seed);
+    cudaDeviceSynchronize();
+
+    // Transfer Values
+    u_int8_t *pValues;
+    cudaMallocManaged(&pValues,sizeof(u_int8_t)*IM_WIDTH*IM_HEIGHT*SAMPLE_NUM*3);
+    int n = IM_WIDTH * IM_HEIGHT / BLOCKSIZE + 1;
+    toneMap<<<n,BLOCKSIZE>>>(gpuValues,pValues);
+    cudaDeviceSynchronize();
+
+    cudaMemcpy(values,pValues,sizeof(u_int8_t)*IM_WIDTH*IM_HEIGHT*3,cudaMemcpyDeviceToHost);
+    //cudaError_t err = cudaGetLastError();
+    //printf("%d\n",err);
 
     cudaFree(gpuValues);
-    scene->~Scene();
-    cudaFree(scene);
+    cudaFree(pValues);
 }
+
+extern "C" {
+
+void createImage(void *scenePtr, char *img_file="") {
+    Scene *scene = (Scene *) scenePtr;
+
+    u_int8_t values[IM_WIDTH*IM_HEIGHT*3];
+    renderScene(scene,values);
+
+    stbi_write_png(img_file, IM_WIDTH, IM_HEIGHT, 3, values, IM_WIDTH*3);
+}
+
+};

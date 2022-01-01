@@ -3,31 +3,10 @@
 #include "stb_image/stb_image.h"
 
 #define P_SPEC 0.5
-#define P_MIN 0.01
 
 enum PTYPE {DIFFUSE=0,SPECULAR=1};
 
-class Image {
- public:
-  Image(const char *filename) {
-    cudaMallocManaged(&m_values,sizeof(u_int8_t)*IM_WIDTH*IM_HEIGHT*3);
-
-    int width, height, channels;
-    width = 0; height = 0; channels = 0;
-    stbi_uc *values = stbi_load(filename, &width, &height, &channels, 3);
-    cudaMemcpy(m_values,values,sizeof(u_int8_t)*IM_WIDTH*IM_HEIGHT*3,cudaMemcpyHostToDevice);
-    //assert(width == IM_WIDTH && height == IM_HEIGHT && channels == 3);
-  }
-
-  __host__ __device__ vecF getValue(int r, int c) {
-    int idx = (r * IM_WIDTH + c) * 3;
-    return vecF(m_values[idx],m_values[idx+1],m_values[idx+2]) / 255.;
-  }
- private:
-  u_int8_t *m_values;
-};
-
-struct LightEdge {
+struct Edge {
   
   int n;
   float w_sum;
@@ -50,45 +29,77 @@ struct LightEdge {
   __host__ __device__ void normalize() {
     for (int j = 0; j < 2; j++) {
       for (int i = 0; i < 3; i++) {
-	pixel_sum[j][i] /= factors_sum[j];
-	light_sum[j][i] /= factors_sum[j];
+	float weight = (factors_sum[j] != 0.) ? factors_sum[j] : 1.;
+	pixel_sum[j][i] /= weight;
+	light_sum[j][i] /= weight;
       }
     }
   }
 };
 
-struct Graph {
+class DataWrapper {
+ public:
+ DataWrapper(const char *filename, int nT) : m_nT(nT) 
+  {
+    int width, height, channels;
+    width = 0; height = 0; channels = 0;
+    stbi_uc *vals = stbi_load(filename, &width, &height, &channels, 3);
+    cudaMemcpy(m_values,vals,sizeof(u_int8_t)*IM_WIDTH*IM_HEIGHT*3,cudaMemcpyHostToDevice);
 
-  std::vector<float> p_src;
-  std::vector<float> d_light;
-  std::vector<float> d_pixel;
-  std::vector<float> s_light;
-  std::vector<float> s_pixel;
-  
-  Graph() {}
+    int nE = m_nT * m_nT;
+    cudaMallocManaged(&m_edges,sizeof(Edge)*nE);
+    new(m_edges) Edge[nE];
+		 
+    cudaMallocManaged(&m_eyeEdges,sizeof(Edge)*m_nT);
+    new(m_eyeEdges) Edge[m_nT];
+  }
 
-  Graph(LightEdge les[], int nT) {
-    float w_total;
-    for (int dst = 0; dst < nT; dst++) {
-      w_total = 0.;
-      for (int src = 0; src < nT; src++) {
-	if (!(src == dst)) {w_total += les[dst*nT + src].w_sum;}
-      }
-      w_total = (w_total != 0.) ? w_total : 1.;
-      for (int src = 0; src < nT; src++) {
-	LightEdge le = les[dst*nT + src];
-	le.normalize();
+  ~DataWrapper() {
+    cudaFree(m_edges);
+  }
 
-	float p_s = float(le.w_sum) / w_total;
-	p_src.push_back(p_s);
+  __host__ __device__ vecF getPixel(int r, int c) {
+    int idx = (r * IM_WIDTH + c) * 3;
+    return vecF(m_values[idx],m_values[idx+1],m_values[idx+2]) / 255.;
+  }
 
+  __host__ __device__ Edge * get(int dst, int src) {
+    return (dst != m_nT) ? m_edges + dst * m_nT + src : m_eyeEdges + src;
+  }
+
+  __device__ void update(int dst, int src, float w, vecF pixel, vecF light, float *factors) {
+    get(dst,src)->update(w,pixel,light,factors);
+  }
+
+  std::vector<float> compress() {
+    std::vector<float> weights;
+    std::vector<float> pixels;
+    std::vector<float> lights;
+    
+    for (int dst = 0; dst <= m_nT; dst++) {
+      for (int src = 0; src < m_nT; src++) {
+        Edge *e = get(dst,src);
+	e->normalize();
+	weights.push_back(e->w_sum);
 	for (int i = 0; i < 3; i++) {
-	  d_light.push_back(le.light_sum[DIFFUSE][i]);
-	  d_pixel.push_back(le.pixel_sum[DIFFUSE][i]);
-	  s_light.push_back(le.light_sum[SPECULAR][i]);
-	  s_pixel.push_back(le.pixel_sum[SPECULAR][i]);
+	  pixels.push_back(e->pixel_sum[DIFFUSE][i]);
+	  lights.push_back(e->light_sum[DIFFUSE][i]);
 	}
       }
     }
+    
+    std::cout << weights.size() << " " << pixels.size() << " " << lights.size() << std::endl;
+    std::vector<float> data;
+    data.insert(data.end(), weights.begin(), weights.end());
+    data.insert(data.end(), pixels.begin(), pixels.end());
+    data.insert(data.end(), lights.begin(), lights.end());
+    return data;
   }
+
+ private:
+  int m_nT;
+  u_int8_t m_values[IM_HEIGHT*IM_WIDTH*3];
+  
+  Edge *m_edges;
+  Edge *m_eyeEdges;
 };

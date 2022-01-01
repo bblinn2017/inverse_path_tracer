@@ -5,7 +5,7 @@ from ctypes import *
 import sys,os
 from scipy.sparse import csr_matrix
 
-P_MIN = 1e-2
+P_MIN = 1e-3
 
 def blockPrint():
     sys.stdout = open(os.devnull, 'w')
@@ -14,7 +14,8 @@ def blockPrint():
 def enablePrint():
     sys.stdout = sys.__stdout__
 
-lib = cdll.LoadLibrary("./build/libipt.so")
+lib_ipt = cdll.LoadLibrary("./build/libipt.so")
+lib_pt = cdll.LoadLibrary("./build/libpt.so")
 (Cube,Sphere,Cornell,Other) = (0,1,2,3)
 
 c_int_p = POINTER(c_int)
@@ -59,22 +60,33 @@ def dereference(py_objects):
     return shps,poss,oris,scls,objs,mtls,n
 
 def generate_graph():
+
     cube = ObjParams(Cube,np.array([0,-1.5,4]),np.zeros(3),np.ones(3))
     cornell = ObjParams(Cornell,np.array([0,0,4]),np.zeros(3),np.ones(3)*2)
     
     py_objects = [cornell,cube]
     params = dereference(py_objects)
-    scene_ptr = c_void_p(0)
-    n_t = lib.loadScene(*params,pointer(scene_ptr))
+    
+    for i in range(2):
+        scene_ptr = c_void_p(0)
+        filename_ptr = c_char_p(f"imgs/{i}.png".encode('utf-8'))
+        n_t = lib_pt.loadScene(*params,pointer(scene_ptr))        
 
-    w_mat = (c_float * n_t ** 2)(0)
-    lib.createGraph(scene_ptr,w_mat)
-    w_mat = np.ctypeslib.as_array(w_mat).reshape(n_t,n_t)
-    w_mat[w_mat < P_MIN] = 0.
-    w_mat = csr_matrix(w_mat)
-    print(w_mat)
-    print(w_mat.nnz/np.prod(w_mat.shape))
-    #visualize(w_mat)
+        lib_pt.createImage(scene_ptr,filename_ptr)
+        lib_pt.freeScene(scene_ptr)
+        """
+    len_data = 7
+    data_sz = (n_t + 1) * n_t * 7
+
+    data = (c_float * data_sz)(0)
+    lib_ipt.createGraph(scene_ptr,data)
+    data = np.ctypeslib.as_array(data).astype(np.float64)
+    
+    size = (n_t + 1) * n_t
+    w = data[:size].reshape(n_t+1,n_t)
+    pixel = data[size:size*4].reshape(n_t+1,n_t,3)
+    light = data[size*4:].reshape(n_t+1,n_t,3)
+    """
 
 def visualize(w_mat):
     t = o3d.io.read_triangle_mesh("CornellBox/CornellBox-Empty-CO.obj")
