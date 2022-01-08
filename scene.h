@@ -87,7 +87,7 @@ class Scene {
  public:
   
  Scene(CameraParams_t camera, std::vector<ObjParams_t> objects) : m_camera(camera) {
-    
+
     m_nO = objects.size();
     cudaMallocManaged(&m_objects,sizeof(Object)*m_nO);
     for (int i = 0; i < m_nO; i++) {
@@ -141,6 +141,25 @@ class Scene {
   __host__ __device__ int nObjects() {return m_nO;}
 
   __host__ __device__ int nEmissives() {return m_nE;}
+
+  std::vector<float> getMaterials() {
+    std::vector<float> materials;
+    for (int i = 0; i < m_nO; i++) {
+      std::vector<float> curr = (m_objects+i)->getMaterials();
+      materials.insert(materials.end(), curr.begin(), curr.end());
+    }
+    return materials;
+  }
+
+  void setMaterials(std::vector<float> materials) {
+    int idx = 0;
+    for (int i = 0; i < m_nO; i++) {
+      int len = (m_objects+i)->nTriangles() * 3;
+      std::vector<float> curr(materials.begin() + idx, materials.begin() + idx + len);
+      (m_objects+i)->setMaterials(curr);
+      idx += len;
+    }
+  }
  
  private:
   Triangle **m_emissives;
@@ -155,13 +174,13 @@ class Scene {
 
 extern "C" {
 
-  int loadScene(int *shps, float **poss, float **oris, float **scls, char **obj_fs, char **mtl_fs, int n, void **scenePtr) {
+  int loadScene(float **poss, float **oris, float **scls, char **obj_fs, char **mtl_fs, int n, void **scenePtr) {
 
     CameraParams_t camParams(true);
     
     std::vector<ObjParams_t> objParams(n);
     for (int i = 0; i < n; i++) {
-      ObjParams_t op(shps[i],poss[i],oris[i],scls[i],obj_fs[i],mtl_fs[i]);
+      ObjParams_t op(poss[i],oris[i],scls[i],obj_fs[i],mtl_fs[i]);
       objParams[i] = op;
     }
     

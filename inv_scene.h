@@ -2,7 +2,7 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image/stb_image.h"
 
-#define P_SPEC 0.5
+#define P_SPEC 0.
 
 enum PTYPE {DIFFUSE=0,SPECULAR=1};
 
@@ -14,6 +14,15 @@ struct Edge {
   float light_sum[2][3];
   float factors_sum[2];
 
+  Edge() {
+    n = 0;
+    w_sum = 0.;
+    for (int i = 0; i < 2; i++) {
+      for (int j = 0; j < 3; j++) {pixel_sum[i][j] = 0.; light_sum[i][j] = 0.;}
+      factors_sum[i] = 0.;
+    }
+  }
+
   __device__ void update(float w, vecF pixel, vecF light, float *factors) {
     atomicAdd_system(&n,1);
     atomicAdd_system(&w_sum,w);
@@ -23,13 +32,14 @@ struct Edge {
 	atomicAdd_system(&(light_sum[j][i]),w*factors[j]*light[i]);
       }
     }
-    for (int i = 0; i < 2; i++) {atomicAdd_system(&(factors_sum[i]),w*factors[i]);}
+    for (int i = 0; i < 2; i++) atomicAdd_system(&(factors_sum[i]),w*factors[i]);
   }
 
-  __host__ __device__ void normalize() {
+  void normalize() {
+    w_sum = log(w_sum+1);
     for (int j = 0; j < 2; j++) {
+      float weight = (factors_sum[j]) ? factors_sum[j] : 1.;
       for (int i = 0; i < 3; i++) {
-	float weight = (factors_sum[j] != 0.) ? factors_sum[j] : 1.;
 	pixel_sum[j][i] /= weight;
 	light_sum[j][i] /= weight;
       }
@@ -55,7 +65,10 @@ class DataWrapper {
   }
 
   ~DataWrapper() {
+    for (int i = 0; i < m_nT * m_nT; i++) (m_edges + i)->~Edge();
+    for (int i = 0; i < m_nT; i++) (m_eyeEdges + i)->~Edge();
     cudaFree(m_edges);
+    cudaFree(m_eyeEdges);
   }
 
   __host__ __device__ vecF getPixel(int r, int c) {
@@ -77,18 +90,23 @@ class DataWrapper {
     std::vector<float> lights;
     
     for (int dst = 0; dst <= m_nT; dst++) {
+      float w_total = 0.;
       for (int src = 0; src < m_nT; src++) {
         Edge *e = get(dst,src);
 	e->normalize();
-	weights.push_back(e->w_sum);
+	float val = e->w_sum;
+	w_total += val;
 	for (int i = 0; i < 3; i++) {
 	  pixels.push_back(e->pixel_sum[DIFFUSE][i]);
 	  lights.push_back(e->light_sum[DIFFUSE][i]);
 	}
       }
+      for (int src = 0; src < m_nT; src++) {
+	float val = w_total ? get(dst,src)->w_sum / w_total : 0.;
+	weights.push_back(val);
+      }
     }
     
-    std::cout << weights.size() << " " << pixels.size() << " " << lights.size() << std::endl;
     std::vector<float> data;
     data.insert(data.end(), weights.begin(), weights.end());
     data.insert(data.end(), pixels.begin(), pixels.end());

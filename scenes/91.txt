@@ -1,0 +1,9 @@
+OBJECT
+POS 0 0 4
+SCL 2.0 2.0 2.0
+OBJ ./CornellBox/CornellBox-Empty-CO.obj
+MTL ./CornellBox/CornellBox-Empty-CO.mtl
+OBJECT
+POS 0.0 -1.5 4.0
+OBJ ./shapes/cube.obj
+MTL *Kd 0.9213656143413962 0.8631082720105708 0.10231576114477892*

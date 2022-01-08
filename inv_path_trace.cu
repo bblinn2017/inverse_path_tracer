@@ -75,11 +75,12 @@ __device__ void directLighting(Scene *scene, DataWrapper *dw, vecF d, intersecti
     float weight = prev_weight * cos_theta * cos_theta_prime / pow(i.t, 2.) / p_t;
     vecF light = L_o;
     vecF pixel = dw->getPixel(r,c);
-    float factors[2]; 
+    float factors[2];
     BSDF(intersect, d, toLight, isSpecular, shininess, true, factors);
     
     int src = emissives[t_emm->idxE]->idx;
     int dst = t_curr->idx;
+    
     dw->update(dst,src,weight,pixel,light,factors);
     
     return;
@@ -113,7 +114,7 @@ __device__ int radiance(Scene *scene, DataWrapper *dw, int dst, Ray &ray, int re
 
     Triangle *tri = intersect.tri;
     mat_t mat = tri->material;
-    bool isSpecular = false;//curand_uniform(&state) < P_SPEC;
+    bool isSpecular = curand_uniform(&state) < P_SPEC;
     float shininess = 0.;//curand_uniform(&state);
     
     // Indirect Lighting from previous iteration
@@ -168,7 +169,7 @@ __global__ void renderSample(Scene *scene, DataWrapper *dw, unsigned long long s
     d.normalize();
     Ray ray = Ray(p,d);
     float weight = 1.;
-    float factors[2];
+    float factors[2] = {1,1};
     
     ray.transform(scene->getInverseViewMatrix());
     
@@ -186,24 +187,37 @@ void renderScene(Scene *scene, DataWrapper *dw) {
     renderSample<<<NBLOCKS,BLOCKSIZE>>>(scene,dw,seed);
     cudaDeviceSynchronize();
     //cudaError_t err = cudaGetLastError();
-    //printf("%d\n",err);
+    //std::cout << err << std::endl;
 }
 
 extern "C" {
 
-void createGraph(void *scenePtr, float *data) {
+void createGraph(void *scenePtr, char *imgFile, float *data) {
     Scene *scene = (Scene *) scenePtr;
 
     DataWrapper *dw;
     cudaMallocManaged(&dw,sizeof(DataWrapper));
-    new(dw) DataWrapper("/users/bblinn/pt_inv/temp.png",scene->nTriangles());
+    new(dw) DataWrapper(imgFile,scene->nTriangles());
     
     renderScene(scene,dw);
     std::vector<float> compressed = dw->compress();
     memcpy(data,compressed.data(),sizeof(float)*compressed.size());
+    
+    dw->~DataWrapper();
+    cudaFree(dw);
+}
 
-    scene->~Scene();
-    cudaFree(scene);
+void getMaterials(void *scenePtr, float *materials) {
+    Scene *scene = (Scene *) scenePtr;
+    std::vector<float> sceneMaterials = scene->getMaterials();
+    memcpy(materials,sceneMaterials.data(),sizeof(float)*sceneMaterials.size());
+}
+
+void setMaterials(void *scenePtr, float *materials) {
+    Scene *scene = (Scene *) scenePtr;
+    std::vector<float> sceneMaterials(scene->nTriangles()*3);
+    memcpy(sceneMaterials.data(),materials,sizeof(float)*sceneMaterials.size());
+    scene->setMaterials(sceneMaterials);
 }
 
 };

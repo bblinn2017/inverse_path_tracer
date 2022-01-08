@@ -32,8 +32,6 @@ __host__ __device__ vecF CMAX(vecF x, vecF y) {return vecF(max(x[0],y[0]),max(x[
 __host__ __device__ void PRINT(vecF v) {printf("%f %f %f\n",v[0],v[1],v[2]);}
 __host__ __device__ void PRINT(Eigen::MatrixXf m) {for (int i = 0; i < m.rows(); i++) {for(int j = 0; j < m.cols(); j++) {printf("%f ",m(i,j));} printf("\n");}}
 
-enum shape_type_t {Cube=0,Sphere=1,Cornell=2,Other=3};
-
 struct mat_t {
 
   real_t diffuse[3];
@@ -113,15 +111,13 @@ class Triangle {
 
 struct ObjParams_t{
 
-  shape_type_t shp;
   vecF pos;
   vecF ori;
   vecF scl;
   char *obj_file;
   char *mtl_file;
 
-  ObjParams_t(int s, float p[3], float o[3], float sc[3], char *ob, char *m) {
-    shp = (shape_type_t) s;
+  ObjParams_t(float p[3], float o[3], float sc[3], char *ob, char *m) {
     pos = vecF(p[0],p[1],p[2]);
     ori = vecF(o[0],o[1],o[2]);
     scl = vecF(sc[0],sc[1],sc[2]);
@@ -129,8 +125,7 @@ struct ObjParams_t{
     mtl_file = m;
   }
 
-  ObjParams_t(shape_type_t s, vecF p, vecF o, vecF sc, char *ob, char *m) {
-    shp = s;
+  ObjParams_t(vecF p, vecF o, vecF sc, char *ob, char *m) {
     pos = p;
     ori = o;
     scl = sc;
@@ -160,20 +155,6 @@ class Mesh {
     T.rotate(Eigen::AngleAxisf(angle,obj.ori));
     // Scale
     T.scale(obj.scl);
-    // Load Mesh
-    switch(obj.shp) {
-    case Cube:
-      obj.obj_file = "/users/bblinn/pt_inv/shapes/cube.obj";
-      break;
-    case Sphere:
-      obj.obj_file = "/users/bblinn/pt_inv/shapes/sphere.obj";
-      break;
-    case Cornell:
-      obj.obj_file = "/users/bblinn/pt_inv/CornellBox/CornellBox-Empty-CO.obj";
-      obj.mtl_file = "/users/bblinn/pt_inv/CornellBox/CornellBox-Empty-CO.mtl";
-    default:
-      break;
-    }
 
     std::vector<vecF> vs;
     std::vector<vecF> ns;
@@ -238,17 +219,11 @@ class Mesh {
       exit(1);
     }
     std::istream obj_ifs(&obj_fb);
-
-    std::filebuf mtl_fb;
-    if(!mtl_fb.open(mtl_file,std::ios::in) && mtl_file != "") {
-      printf("Error: Material File was not able to be opened\n");
-      std::cerr << "Error: " << strerror(errno) << std::endl;
-      exit(1);
-    }
-    std::istream mtl_ifs(&mtl_fb);
-
+    
+    bool inString = mtl_file[0] == '*';
+    std::ifstream mtl_ifs(inString ? NULL : mtl_file.c_str());    
     MaterialStreamReader mtl_ss(mtl_ifs);
-
+    
     attrib_t attrib;
     std::vector<shape_t> shapes;
     std::vector<material_t> materials;
@@ -270,18 +245,27 @@ class Mesh {
     std::vector<index_t> f_idx;
     std::vector<int> mat_ids;
 
-    // Create random mat
-    srand(time(NULL));
+    // Include mat
     material_t rand_mat;
     InitMaterial(&rand_mat);
-    float spec = 0.f;//(real_t) rand() / RAND_MAX;
-    spec = (spec > 0.5) ? spec : 0.f;
-    for (int i = 0; i < 3; i++) {
-      rand_mat.diffuse[i] = (real_t) rand() / RAND_MAX;
-      rand_mat.specular[i] = spec;
+    if (inString) {
+      std::stringstream ss(mtl_file.substr(1,mtl_file.size()-2));
+      std::string line;
+      while(std::getline(ss,line,'\n')) {
+	const char *token = line.c_str();
+	if (token[0] == 'K' && IS_SPACE((token[2]))) {
+	  char k = token[1];
+	  token += 2;
+	  real_t r, g, b;
+	  parseReal3(&r, &g, &b, &token);
+	  if (k == 'd') {
+	    rand_mat.diffuse[0] = r;
+	    rand_mat.diffuse[1] = g;
+	    rand_mat.diffuse[2] = b;
+	  }
+	}
+      }
     }
-    rand_mat.shininess = (real_t) rand() / RAND_MAX * 100.f;
-    rand_mat.ior = (real_t) rand() / RAND_MAX;
 
     for (int i = 0; i < shapes.size(); i++) {
       f_idx = shapes[i].mesh.indices;
@@ -486,6 +470,23 @@ class Object {
     }
     for (int i = 0; i < m_mesh.m_nE; i++) {
       m_mesh.m_emissives[i]->idxE += currE;
+    }
+  }
+
+  std::vector<float> getMaterials() {
+    std::vector<float> materials;
+    for (int i = 0; i < m_mesh.m_nT; i++) {
+      mat_t mat = (m_mesh.m_triangles + i)->material;
+      for (int j = 0; j < 3; j++) {materials.push_back(mat.diffuse[j]);}
+    }
+    return materials;
+  }
+
+  void setMaterials(std::vector<float> materials) {
+    int idx = 0;
+    for (int i = 0; i < m_mesh.m_nT; i++) {
+      Triangle *t = m_mesh.m_triangles + i;
+      for (int j = 0; j < 3; j++) {t->material.diffuse[j] = materials[idx]; idx++;}
     }
   }
 

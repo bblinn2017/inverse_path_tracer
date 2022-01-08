@@ -760,7 +760,7 @@ void LoadMtl(std::map<std::string, int> *material_map,
        material.unknown_parameter.insert(
 					 std::pair<std::string, std::string>(key, value));
      }
-   }
+   } 
    // flush last material.
    material_map->insert(std::pair<std::string, int>(
 						    material.name, static_cast<int>(materials->size())));
