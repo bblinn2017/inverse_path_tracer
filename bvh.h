@@ -173,7 +173,7 @@ class BVH {
       }
 
       split_dim = bc.maxDimension();
-      split_coord = (bc.min[split_dim] + bc.max[split_dim]);
+      split_coord = (bc.min[split_dim] + bc.max[split_dim]) / 2.;
 
       mid = start;
       for (int i = start; i < end; i++) {
